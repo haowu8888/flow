@@ -68,7 +68,8 @@
 | `web/` | 前端：Vite + React + TypeScript，React Flow 画 DAG，xterm.js 显示日志；`src/editor/` 为可视化流水线编辑器（`model.ts` 在 YAML 文档树上增删改，保留注释与未改动的格式；`Canvas.tsx` 画布；`Panels.tsx` 属性面板；`presets.ts` 任务组件库；`History.tsx` 配置历史、差异与回退；`YamlEditor.tsx` + `yamlAssist.ts` 基于 CodeMirror 的 YAML 模式：问题定位到行、按层级补全字段；`StepTemplateForm.tsx` 步骤模板表单）；界面布局参照 Code Flow：顶栏「仪表盘 / 流水线 / API Key / 账户设置」，流水线列表与账户设置为左侧分区导航；流水线详情分「最近运行 / 运行历史 / 部署历史 / 统计报表」，编辑页（`#/pipelines/{id}/edit/{basic|triggers|vars}`）分「基本信息 / 流程配置 / 触发设置 / 变量和缓存」，流程配置中任务与阶段的属性在右侧抽屉中编辑（`PipelineEditor` 的 `section`，设置分区由 `Panels.tsx` 的 `PipelineSettings` 渲染）；`components/StageBoard.tsx` 为运行的阶段看板（点任务 / 步骤打开日志窗口），`components/Icon.tsx` 为线性图标；`src/pages/` 中 `Dashboard.tsx` 为仪表盘、`NewPipeline.tsx` 为新建向导、`Hosts.tsx` 为环境与主机、`PipelineStats.tsx` 为统计、`Audit.tsx` 为审计日志 |
 | `internal/webui` | `go:embed` 前端构建产物（`web/` 构建输出到 `internal/webui/dist`） |
 | `examples/` | 示例流水线 |
-| `deploy/` | Server / Runner 镜像 Dockerfile，`kubernetes/runner.yaml` 为 Kubernetes 执行器部署清单 |
+| `deploy/` | Server / Runner 镜像 Dockerfile（从源码构建），`kubernetes/runner.yaml` 为 Kubernetes 执行器部署清单；`docker/` 为 Docker Compose 部署（预编译二进制的运行镜像 + Server / 内置构建节点编排，见「Docker 部署」） |
+| `scripts/package-docker.sh` | 打包 Docker 部署目录：构建前端、交叉编译 Server 与各平台 Runner，输出 `build/flow-docker(.tar.gz)` |
 
 ## 快速开始
 
@@ -115,6 +116,25 @@ curl -s -H "$H" localhost:8080/api/runs/$RUN | jq '.run.status, [.jobs[] | {name
 ```bash
 FLOW_TEST_DATABASE_URL=postgres://flow:flow@localhost:5432/flow_test go test -race ./...
 ```
+
+## Docker 部署
+
+服务器上不需要 Go / Node：本地打包预编译二进制，服务器只构建一个 alpine 运行镜像（Server 与内置构建节点共用）。
+
+```bash
+scripts/package-docker.sh            # 输出 build/flow-docker.tar.gz（VERSION=… 指定版本号，SKIP_WEB=1 跳过前端构建）
+# 上传到服务器并解压，例如 /opt/1panel/docker/compose/flow，然后：
+cp .env.example .env                 # 填写数据库、端口、外部地址、admin 初始密码
+docker build -t flow:latest .        # 或 docker compose build
+docker compose up -d
+```
+
+- 首次启动后在「账户设置 → 构建节点 → 添加节点」创建自建节点，把令牌填到 `.env` 的 `FLOW_RUNNER_TOKEN`，再 `docker compose up -d`，内置构建节点（`flow-runner` 容器，标签 `linux,docker`）即上线。
+- 内置构建节点挂载宿主 `/var/run/docker.sock`，指定了 `image` 的任务在宿主 Docker 中执行；工作目录 `FLOW_RUNNER_WORKDIR`（默认 `/opt/flow-runner`）在宿主与容器内路径相同，任务容器才能挂载到它。
+- `./data` 保存主密钥 `secret.key` 与本地产物，需随数据库一起备份。
+- **1Panel**：解压到 `/opt/1panel/docker/compose/flow` 后会出现在「容器 → 编排」中，可在面板里查看日志、重启、编辑 compose。使用面板安装的 PostgreSQL 时，在其容器里建库（`CREATE ROLE flow LOGIN PASSWORD '…'; CREATE DATABASE flow OWNER flow;`），`.env` 中主机名写 `postgresql`，并设置 `FLOW_NETWORK=1panel-network`、`FLOW_NETWORK_EXTERNAL=true`；再在「数据库 → PostgreSQL」中「从服务器获取」即可在面板中管理与备份。
+- 升级：重新打包上传，覆盖 `bin/`、`dist/` 后 `docker build -t flow:latest . && docker compose up -d`（迁移在 Server 启动时自动执行）。
+- Docker 24 自带的 BuildKit 在部分网络环境下解析基础镜像元数据会卡住，可用 `DOCKER_BUILDKIT=0 docker build -t flow:latest .`。
 
 ## 配置
 
