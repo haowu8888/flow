@@ -1,0 +1,19 @@
+# Docker 镜像：构建并推送，标签为提交号。需在「密钥」中添加 REGISTRY_USER / REGISTRY_PASSWORD。
+name: docker-image
+source:
+  url: https://git.example.com/team/app.git
+  branch: main
+env:
+  IMAGE: registry.example.com/team/app
+stages:
+  - name: image
+    jobs:
+      - name: build-push
+        runs-on: docker
+        steps:
+          - name: login
+            run: echo "$REGISTRY_PASSWORD" | docker login "${IMAGE%%/*}" -u "$REGISTRY_USER" --password-stdin
+          - name: build
+            run: docker build -t "$IMAGE:${FLOW_GIT_COMMIT:-$FLOW_RUN_ID}" .
+          - name: push
+            run: docker push "$IMAGE:${FLOW_GIT_COMMIT:-$FLOW_RUN_ID}"

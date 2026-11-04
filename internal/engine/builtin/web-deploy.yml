@@ -1,0 +1,21 @@
+# 前端站点：npm 构建 → 上传 dist 到 Nginx 站点目录并重载。
+name: web-site
+source:
+  url: https://git.example.com/team/web.git
+  branch: main
+stages:
+  - name: build
+    jobs:
+      - name: build
+        image: node:20
+        cache: {key: "npm-${FLOW_PIPELINE}", paths: [node_modules]}
+        artifacts: [dist]
+        steps:
+          - {name: install, run: npm ci}
+          - {name: build, run: npm run build}
+  - name: deploy
+    jobs:
+      - name: deploy
+        deploy: {hosts: web-servers, upload: dist, target: /usr/share/nginx/html/site, batch: 1000}
+        steps:
+          - {name: reload nginx, run: nginx -t && nginx -s reload}

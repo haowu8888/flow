@@ -1,0 +1,92 @@
+# Kubernetes 执行器：flow-runner 控制进程在集群内运行，为每个 Job 创建一个 Pod。
+# 使用前：
+#   1. 构建并推送 deploy/runner.Dockerfile 镜像，替换下方 image 与 FLOW_K8S_HELPER_IMAGE；
+#   2. 在 Flow 界面「Runner」页注册一个 Runner，把 Token 写入 Secret flow-runner-token；
+#      kubectl -n flow-ci create secret generic flow-runner-token --from-literal=token=fr_xxx
+#   3. 按需修改 FLOW_SERVER（Pod 内可访问的 Server 地址）、FLOW_RUNNER_LABELS、资源与缓存配置。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flow-ci
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flow-runner
+  namespace: flow-ci
+---
+# 控制进程只需在本命名空间内管理 Job Pod 与其 Secret。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flow-runner
+  namespace: flow-ci
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flow-runner
+  namespace: flow-ci
+subjects:
+  - kind: ServiceAccount
+    name: flow-runner
+    namespace: flow-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flow-runner
+---
+# 可选：Job 缓存卷，需要支持 ReadWriteMany 的存储类（如 NFS、CephFS）。不需要缓存时删除此资源与 FLOW_K8S_CACHE_PVC。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flow-cache
+  namespace: flow-ci
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flow-runner
+  namespace: flow-ci
+spec:
+  replicas: 1 # 启动时按 FLOW_RUNNER_ID 清理遗留 Pod，同一 ID 只运行一个副本
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: flow-runner}
+  template:
+    metadata:
+      labels: {app: flow-runner}
+    spec:
+      serviceAccountName: flow-runner
+      containers:
+        - name: runner
+          image: registry.example.com/flow-runner:latest
+          env:
+            - {name: FLOW_EXECUTOR, value: kubernetes}
+            - {name: FLOW_SERVER, value: "http://flow-server.flow.svc:8080"}
+            - {name: FLOW_RUNNER_ID, value: k8s-runner} # 固定值，用于识别本 Runner 创建的 Pod
+            - name: FLOW_RUNNER_TOKEN
+              valueFrom: {secretKeyRef: {name: flow-runner-token, key: token}}
+            - {name: FLOW_RUNNER_LABELS, value: "linux,kubernetes"}
+            - {name: FLOW_CONCURRENCY, value: "10"} # 同时运行的 Job Pod 数
+            - {name: FLOW_K8S_HELPER_IMAGE, value: registry.example.com/flow-runner:latest}
+            - {name: FLOW_K8S_DEFAULT_IMAGE, value: "alpine:3.20"}
+            - {name: FLOW_K8S_CACHE_PVC, value: flow-cache}
+            - {name: FLOW_K8S_REQUESTS, value: "cpu=500m,memory=512Mi"}
+            - {name: FLOW_K8S_LIMITS, value: "cpu=2,memory=4Gi"}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}

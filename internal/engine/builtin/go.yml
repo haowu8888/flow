@@ -1,0 +1,26 @@
+# Go 应用：依赖缓存、测试、多平台构建并上传产物。
+name: go-app
+source:
+  url: https://git.example.com/team/app.git   # 改成你的仓库；私有仓库加 token_secret
+  branch: main
+stages:
+  - name: test
+    jobs:
+      - name: test
+        image: golang:1.23
+        cache: {key: go-mod, paths: [.gomodcache]}
+        env: {GOMODCACHE: /workspace/.gomodcache}
+        steps:
+          - {name: vet, run: go vet ./...}
+          - {name: test, run: go test ./...}
+  - name: build
+    jobs:
+      - name: build
+        image: golang:1.23
+        matrix: {GOOS: [linux, darwin], GOARCH: [amd64, arm64]}
+        cache: {key: go-mod, paths: [.gomodcache]}
+        env: {GOMODCACHE: /workspace/.gomodcache, CGO_ENABLED: "0"}
+        artifacts: [dist]
+        steps:
+          - name: build
+            run: go build -o dist/app-$GOOS-$GOARCH .

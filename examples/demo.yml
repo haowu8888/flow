@@ -1,0 +1,36 @@
+name: demo
+env:
+  APP: flow-demo
+
+stages:
+  - name: build
+    jobs:
+      - name: compile
+        steps:
+          - name: info
+            run: echo "building $APP (run $FLOW_RUN_ID)"
+          - name: build
+            run: |
+              mkdir -p dist
+              echo "binary" > dist/app
+              ls -l dist
+      - name: lint
+        steps:
+          - run: echo "lint ok"
+
+  - name: test
+    jobs:
+      - name: unit
+        needs: [compile]        # 只等 compile，lint 未结束也可启动
+        steps:
+          - run: echo "unit tests passed"
+      - name: e2e
+        # image: alpine:3.20    # 设置后在 docker 容器中执行
+        steps:
+          - run: sleep 2 && echo "e2e passed"
+
+  - name: deploy
+    jobs:
+      - name: staging
+        steps:
+          - run: echo "deploying $APP to ${TARGET:-staging}"

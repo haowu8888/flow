@@ -1,0 +1,23 @@
+# Python：按 requirements 安装依赖（缓存 pip），pytest 测试，构建 wheel 产物。
+name: python-app
+source:
+  url: https://git.example.com/team/app.git
+  branch: main
+stages:
+  - name: test
+    jobs:
+      - name: pytest
+        image: python:3.12
+        cache: {key: pip, paths: [.pip-cache]}
+        env: {PIP_CACHE_DIR: /workspace/.pip-cache}
+        reports: {junit: [reports/junit.xml]}
+        steps:
+          - {name: install, run: pip install -r requirements.txt pytest}
+          - {name: test, run: pytest -q --junitxml=reports/junit.xml}
+  - name: package
+    jobs:
+      - name: wheel
+        image: python:3.12
+        artifacts: [dist]
+        steps:
+          - {name: build, run: pip install build && python -m build --wheel}

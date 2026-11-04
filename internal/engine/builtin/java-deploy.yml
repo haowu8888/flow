@@ -1,0 +1,42 @@
+# Java 服务：Maven 打包 → 部署测试环境 → 部署生产环境（生产环境可在「环境与主机」中设置部署审批）。
+name: java-service
+source:
+  url: https://git.example.com/team/service.git
+  branch: main
+stages:
+  - name: build
+    jobs:
+      - name: package
+        image: maven:3.9-eclipse-temurin-21
+        cache: {key: m2, paths: [.m2]}
+        artifacts: [target]
+        reports: {junit: ["target/surefire-reports/*.xml"]}
+        steps:
+          - name: test & package
+            run: mvn -B -Dmaven.repo.local=.m2 package
+  - name: deploy-test
+    jobs:
+      - name: deploy-test
+        deploy: {hosts: test-servers, upload: target, target: /opt/apps/service}
+        steps:
+          - name: restart
+            run: |
+              APP=$(ls *.jar | grep -v original | head -1)
+              pkill -f "java -jar $FLOW_DEPLOY_DIR/" || true
+              sleep 2
+              nohup java -jar "$FLOW_DEPLOY_DIR/$APP" > app.log 2>&1 &
+              sleep 5
+              pgrep -f "$FLOW_DEPLOY_DIR/$APP" > /dev/null || { tail -50 app.log; exit 1; }
+  - name: deploy-prod
+    jobs:
+      - name: deploy-prod
+        deploy: {hosts: prod-servers, upload: target, target: /opt/apps/service, batch: 1}
+        steps:
+          - name: restart
+            run: |
+              APP=$(ls *.jar | grep -v original | head -1)
+              pkill -f "java -jar $FLOW_DEPLOY_DIR/" || true
+              sleep 2
+              nohup java -jar "$FLOW_DEPLOY_DIR/$APP" > app.log 2>&1 &
+              sleep 5
+              pgrep -f "$FLOW_DEPLOY_DIR/$APP" > /dev/null || { tail -50 app.log; exit 1; }

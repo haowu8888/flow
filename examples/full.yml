@@ -1,0 +1,47 @@
+# 演示密钥、矩阵、产物、缓存、人工卡点、失败通知。
+# 运行前在「密钥」页添加 DEPLOY_TOKEN（任意值），以及钉钉机器人的 DING_TOKEN / DING_SECRET（不需要通知可删掉 notify）。
+name: full-demo
+env:
+  APP: hello
+notify:
+  - type: dingtalk
+    url: https://oapi.dingtalk.com/robot/send?access_token=${DING_TOKEN}
+    secret: ${DING_SECRET}
+    on: [failed, success]
+stages:
+  - name: build
+    jobs:
+      - name: compile
+        matrix: {GOOS: [linux, darwin]}
+        timeout: 10m
+        retry: 1
+        cache: {key: "deps-$GOOS", paths: [.deps]}
+        artifacts: [dist]
+        steps:
+          - name: deps
+            run: |
+              if [ -d .deps ]; then echo "deps from cache"; else mkdir .deps && echo "downloading deps" && date > .deps/stamp; fi
+          - name: build
+            run: |
+              mkdir -p dist
+              echo "$APP for $GOOS" > "dist/$APP-$GOOS.txt"
+  - name: test
+    jobs:
+      - name: unit
+        steps:
+          - run: ls dist && cat dist/*.txt
+  - name: approve
+    jobs:
+      - name: release-approval
+        type: approval
+  - name: deploy
+    jobs:
+      - name: deploy
+        steps:
+          - name: deploy
+            run: |
+              echo "deploying $(ls dist | wc -l) files with token $DEPLOY_TOKEN"   # 日志中显示为 ***
+      - name: cleanup
+        when: always
+        steps:
+          - run: echo "always runs, even if deploy failed or was rejected"

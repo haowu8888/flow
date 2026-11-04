@@ -1,0 +1,37 @@
+# Go 服务：测试 → 编译 linux/amd64 二进制 → 上传到主机并重启 systemd 服务。
+name: go-service
+source:
+  url: https://git.example.com/team/app.git
+  branch: main
+env:
+  SERVICE: app
+stages:
+  - name: test
+    jobs:
+      - name: test
+        image: golang:1.23
+        cache: {key: go-mod, paths: [.gomodcache]}
+        env: {GOMODCACHE: /workspace/.gomodcache}
+        steps:
+          - {name: vet, run: go vet ./...}
+          - {name: test, run: go test ./...}
+  - name: build
+    jobs:
+      - name: build
+        image: golang:1.23
+        cache: {key: go-mod, paths: [.gomodcache]}
+        env: {GOMODCACHE: /workspace/.gomodcache, CGO_ENABLED: "0", GOOS: linux, GOARCH: amd64}
+        artifacts: [bin]
+        steps:
+          - {name: build, run: go build -o bin/$SERVICE .}
+  - name: deploy
+    jobs:
+      - name: deploy
+        deploy: {hosts: prod-servers, upload: bin, target: /opt/apps/app}
+        steps:
+          - name: restart
+            run: |
+              chmod +x "$SERVICE"
+              sudo systemctl restart "$SERVICE"
+              sleep 2
+              systemctl is-active "$SERVICE"

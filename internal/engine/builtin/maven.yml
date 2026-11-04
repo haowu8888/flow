@@ -1,0 +1,16 @@
+# Java Maven：缓存本地仓库，测试并打包 jar。
+name: maven-app
+source:
+  url: https://git.example.com/team/service.git
+  branch: main
+stages:
+  - name: build
+    jobs:
+      - name: package
+        image: maven:3.9-eclipse-temurin-21
+        cache: {key: m2, paths: [.m2]}
+        artifacts: ["target/*.jar"]
+        reports: {junit: ["target/surefire-reports/*.xml"]}
+        steps:
+          - name: package
+            run: mvn -B -Dmaven.repo.local=.m2 package

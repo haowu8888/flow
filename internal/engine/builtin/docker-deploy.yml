@@ -1,0 +1,32 @@
+# 容器服务：构建并推送镜像 → 在主机上拉取新镜像并重建容器。需在「密钥」中添加 REGISTRY_USER / REGISTRY_PASSWORD。
+name: container-service
+source:
+  url: https://git.example.com/team/app.git
+  branch: main
+env:
+  IMAGE: registry.example.com/team/app
+  CONTAINER: app
+  PORTS: "8080:8080"
+stages:
+  - name: image
+    jobs:
+      - name: build-push
+        runs-on: docker
+        steps:
+          - name: login
+            run: echo "$REGISTRY_PASSWORD" | docker login "${IMAGE%%/*}" -u "$REGISTRY_USER" --password-stdin
+          - name: build & push
+            run: |
+              docker build -t "$IMAGE:$FLOW_RUN_ID" .
+              docker push "$IMAGE:$FLOW_RUN_ID"
+  - name: deploy
+    jobs:
+      - name: deploy
+        deploy: {hosts: prod-servers}
+        steps:
+          - name: run container
+            run: |
+              echo "$REGISTRY_PASSWORD" | docker login "${IMAGE%%/*}" -u "$REGISTRY_USER" --password-stdin
+              docker pull "$IMAGE:$FLOW_RUN_ID"
+              docker rm -f "$CONTAINER" 2>/dev/null || true
+              docker run -d --name "$CONTAINER" --restart=always -p "$PORTS" "$IMAGE:$FLOW_RUN_ID"

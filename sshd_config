@@ -1,0 +1,8 @@
+Port 2222
+ListenAddress 127.0.0.1
+HostKey /host_key
+AuthorizedKeysFile /authorized_keys
+PasswordAuthentication no
+StrictModes no
+PidFile /sshd.pid
+UsePAM no

@@ -1,0 +1,29 @@
+# 构建 → 测试 → 人工审批 → 发布，发布失败时执行回滚。
+name: release
+stages:
+  - name: build
+    jobs:
+      - name: build
+        artifacts: [dist]
+        steps:
+          - run: mkdir -p dist && echo "build $FLOW_RUN_ID" > dist/app.txt
+  - name: test
+    jobs:
+      - name: test
+        steps:
+          - run: cat dist/app.txt
+  - name: approve
+    jobs:
+      - name: release-approval
+        type: approval
+  - name: deploy
+    jobs:
+      - name: deploy
+        timeout: 15m
+        steps:
+          - run: echo "deploying $(cat dist/app.txt)"
+      - name: rollback
+        needs: [deploy]
+        when: on_failure
+        steps:
+          - run: echo "rolling back"

@@ -1,0 +1,31 @@
+# Kubernetes：构建推送镜像 → kubectl 更新 Deployment 并等待滚动完成。需在「密钥」中添加 KUBECONFIG_DATA（base64）与镜像仓库凭据。
+name: k8s-service
+source:
+  url: https://git.example.com/team/app.git
+  branch: main
+env:
+  IMAGE: registry.example.com/team/app
+  NAMESPACE: default
+  DEPLOYMENT: app
+stages:
+  - name: image
+    jobs:
+      - name: build-push
+        runs-on: docker
+        steps:
+          - name: build & push
+            run: |
+              echo "$REGISTRY_PASSWORD" | docker login "${IMAGE%%/*}" -u "$REGISTRY_USER" --password-stdin
+              docker build -t "$IMAGE:$FLOW_RUN_ID" .
+              docker push "$IMAGE:$FLOW_RUN_ID"
+  - name: deploy
+    jobs:
+      - name: rollout
+        image: bitnami/kubectl:1.31
+        steps:
+          - name: set image
+            run: |
+              echo "$KUBECONFIG_DATA" | base64 -d > kubeconfig
+              export KUBECONFIG=$PWD/kubeconfig
+              kubectl -n "$NAMESPACE" set image "deployment/$DEPLOYMENT" "*=$IMAGE:$FLOW_RUN_ID"
+              kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=5m
