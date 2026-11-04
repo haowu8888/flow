@@ -1,0 +1,44 @@
+# Flow：Server + 内置构建节点。配置在同目录 .env（参考 .env.example）。
+# 启动：docker compose up -d --build    日志：docker compose logs -f
+services:
+  flow-server:
+    build: .
+    image: flow:${FLOW_VERSION:-latest}
+    container_name: flow-server
+    restart: unless-stopped
+    ports:
+      - "${FLOW_PORT:-8080}:8080"
+    environment:
+      FLOW_DATABASE_URL: ${FLOW_DATABASE_URL}
+      FLOW_PUBLIC_URL: ${FLOW_PUBLIC_URL:-}
+      FLOW_ADMIN_PASSWORD: ${FLOW_ADMIN_PASSWORD:-}
+      FLOW_RUNNER_TOKEN: ${FLOW_RUNNER_TOKEN}
+    volumes:
+      - ./data:/data
+    networks: [flow]
+
+  # 内置构建节点：与 Server 共享 FLOW_RUNNER_TOKEN；指定了 image 的任务通过宿主 Docker 执行，
+  # 工作目录在宿主与容器内使用相同路径，docker run -v 才能挂载到任务容器。
+  flow-runner:
+    image: flow:${FLOW_VERSION:-latest}
+    container_name: flow-runner
+    restart: unless-stopped
+    command: ["flow-runner"]
+    depends_on: [flow-server]
+    environment:
+      FLOW_SERVER: http://flow-server:8080
+      FLOW_RUNNER_TOKEN: ${FLOW_RUNNER_TOKEN}
+      FLOW_RUNNER_ID: ${FLOW_RUNNER_ID:-builtin}
+      FLOW_RUNNER_LABELS: ${FLOW_RUNNER_LABELS:-linux,docker}
+      FLOW_CONCURRENCY: ${FLOW_CONCURRENCY:-2}
+      FLOW_WORKDIR: ${FLOW_RUNNER_WORKDIR:-/opt/flow-runner}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${FLOW_RUNNER_WORKDIR:-/opt/flow-runner}:${FLOW_RUNNER_WORKDIR:-/opt/flow-runner}
+    networks: [flow]
+
+networks:
+  flow:
+    # 使用已有网络（如 1Panel 的 1panel-network）以访问面板安装的 PostgreSQL；留空则新建
+    name: ${FLOW_NETWORK:-flow}
+    external: ${FLOW_NETWORK_EXTERNAL:-false}
