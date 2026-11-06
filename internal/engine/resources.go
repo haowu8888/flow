@@ -1,13 +1,16 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -172,6 +175,11 @@ type ArtifactMeta struct {
 	Name    string
 	Version string // 为空时自动递增为 vN
 	Format  string // zip / tar.gz
+	// Connection 非空时存到该对象存储服务连接（Bucket 为空用连接的默认 Bucket），否则存在 Server。
+	Connection string
+	Bucket     string
+	// ExpireDays 覆盖保留天数：空沿用流水线 / Server 默认，0 永久保留。
+	ExpireDays string
 }
 
 var artifactNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -207,9 +215,28 @@ func (e *Engine) UploadNamedArtifact(ctx context.Context, jobID, runnerID string
 			meta.Version = fmt.Sprintf("v%d", n)
 		}
 	}
+	// key 是记录在构建物上的 blob key；dst / object 是实际写入的存储与对象路径。
 	key := fmt.Sprintf("artifacts/%s/%s/%s.%s", j.TenantID, j.RunID, newID(), meta.Format)
+	var dst blob.Store = e.blobs
+	object := key
+	if meta.Connection != "" {
+		c, err := e.store.GetConnectionByName(ctx, j.TenantID, meta.Connection)
+		if err != nil {
+			return nil, fmt.Errorf("storage connection %q: %w", meta.Connection, err)
+		}
+		s3, bucket, err := e.connS3(c, meta.Bucket)
+		if err != nil {
+			return nil, err
+		}
+		run, err := e.store.GetRun(ctx, j.RunID)
+		if err != nil {
+			return nil, err
+		}
+		object = fmt.Sprintf("flow/%s/artifacts/%s/%s.%s", run.PipelineID, j.RunID, cmp.Or(meta.Name, j.Name+"-"+newID()), meta.Format)
+		dst, key = s3, extKey(c.ID, bucket, object)
+	}
 	cr := &countingReader{r: r}
-	if err := e.blobs.Put(ctx, key, cr, -1); err != nil {
+	if err := dst.Put(ctx, object, cr, -1); err != nil {
 		return nil, err
 	}
 	now := e.now()
@@ -222,17 +249,24 @@ func (e *Engine) UploadNamedArtifact(ctx context.Context, jobID, runnerID string
 	case j.ArtifactTTLSec > 0:
 		ttl = time.Duration(j.ArtifactTTLSec) * time.Second
 	}
+	if d := strings.TrimSpace(meta.ExpireDays); d != "" {
+		n, err := strconv.Atoi(d)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("%w: expire days must be a non-negative integer", ErrInvalid)
+		}
+		ttl = time.Duration(n) * 24 * time.Hour
+	}
 	if ttl > 0 {
 		exp := now.Add(ttl)
 		a.ExpiresAt = &exp
 	}
 	old, err := e.store.PutArtifact(ctx, a)
 	if err != nil {
-		_ = e.blobs.Delete(ctx, key)
+		_ = dst.Delete(ctx, object)
 		return nil, err
 	}
-	if old != "" {
-		_ = e.blobs.Delete(ctx, old)
+	if old != "" && old != key {
+		_ = e.removeBlob(ctx, old)
 	}
 	e.runChanged(j.RunID)
 	return a, nil
@@ -246,8 +280,23 @@ func (e *Engine) Artifact(ctx context.Context, id string) (*model.Artifact, erro
 	return e.store.GetArtifact(ctx, id)
 }
 
+func artifactMAC(id string) string { return "artifact:" + id }
+
+// ArtifactLinkPath 返回构建物的免登录下载路径（带签名，构建物删除后失效），供通知与外部下载使用。
+func (e *Engine) ArtifactLinkPath(a *model.Artifact) string {
+	return "/api/open/artifacts/" + a.ID + "/download?sig=" + url.QueryEscape(e.cipher.MAC(artifactMAC(a.ID)))
+}
+
+// ArtifactByLink 校验免登录下载链接的签名并返回构建物。
+func (e *Engine) ArtifactByLink(ctx context.Context, id, sig string) (*model.Artifact, error) {
+	if !e.cipher.VerifyMAC(artifactMAC(id), sig) {
+		return nil, ErrUnauthorized
+	}
+	return e.store.GetArtifact(ctx, id)
+}
+
 func (e *Engine) OpenArtifact(ctx context.Context, a *model.Artifact) (io.ReadCloser, error) {
-	rc, err := e.blobs.Open(ctx, a.BlobKey)
+	rc, err := e.openBlob(ctx, a.BlobKey)
 	if errors.Is(err, blob.ErrNotFound) {
 		return nil, store.ErrNotFound
 	}

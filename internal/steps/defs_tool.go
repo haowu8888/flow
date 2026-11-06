@@ -124,15 +124,17 @@ ok "已安装 $INPUT_PACKAGES"
 `},
 
 		// ---- 构建物（Runner 直接执行）----
-		&Kind{Kind: "artifact-upload", Category: "upload", Label: "构建物上传", Native: true,
-			Description: "把打包路径压缩为 zip 上传为构建物（同名构建物版本自动递增 v1、v2…），输出 ARTIFACT_<名称>，供下游下载或部署",
+		&Kind{Kind: "artifact-upload", Category: "upload", Label: "构建物上传", Native: true, Connection: "oss", ConnectionOptional: true,
+			Description: "把打包路径压缩为 zip 上传为构建物（同名构建物版本自动递增 v1、v2…），输出 ARTIFACT_<名称>，供下游下载或部署；选了对象存储连接时存到该 Bucket（如 Cloudflare R2），否则存在 Flow Server",
 			Inputs: []Input{
 				{Key: "name", Label: "构建物名称", Required: true, Placeholder: "app"},
 				{Key: "paths", Label: "打包路径（每行一个，相对代码目录，支持通配符）", Widget: "textarea", Required: true, Default: "dist"},
 				{Key: "version", Label: "制品版本", Placeholder: "留空自动递增"},
 				{Key: "include_dir", Label: "制品中包含打包路径的目录", Widget: "checkbox"},
+				{Key: "bucket", Label: "Bucket", Placeholder: "留空用服务连接的默认 Bucket", Description: "仅选了对象存储连接时有效", Advanced: true},
+				{Key: "expire_days", Label: "保留天数", Placeholder: "留空沿用流水线设置", Description: "0 为永久保留；过期后连同存储里的文件一起删除", Advanced: true},
 			},
-			Outputs: []string{"ARTIFACT_<名称>", "ARTIFACT_<名称>_VERSION"}},
+			Outputs: []string{"ARTIFACT_<名称>", "ARTIFACT_<名称>_VERSION", "ARTIFACT_<名称>_URL"}},
 
 		&Kind{Kind: "artifact-download", Category: "download", Label: "下载构建物", Native: true,
 			Description: "下载上游任务上传的构建物并解压到指定目录",
@@ -149,7 +151,7 @@ ok "已安装 $INPUT_PACKAGES"
 				{Key: "source_path", Label: "本地文件或目录（相对代码目录）", Required: true, Default: "dist"},
 				{Key: "object_path", Label: "上传到 Bucket 的路径", Required: true, Placeholder: "app/${FLOW_RUN_NUMBER}/", Description: "目录时作为前缀"},
 			},
-			Outputs: []string{"OSS_URL"},
+			Outputs: []string{"OSS_BUCKET", "OSS_OBJECT", "OSS_URL"},
 			script: s3Helper + `S="$INPUT_SOURCE_PATH"; [ -e "$S" ] || die "$S 不存在"
 P="${INPUT_OBJECT_PATH#/}"
 if [ -d "$S" ]; then
@@ -159,6 +161,8 @@ else
   case "$P" in */|'') KEY="$P$(basename "$S")" ;; *) KEY="$P" ;; esac
   s3 PUT "$B" "$KEY" "$S"; info "上传 $KEY"
 fi
+set_output OSS_BUCKET "$B"
+set_output OSS_OBJECT "$KEY"
 [ -n "${CONN_PUBLIC_DOMAIN:-}" ] && set_output OSS_URL "${CONN_PUBLIC_DOMAIN%/}/$KEY"
 ok "上传完成"
 `},
@@ -177,11 +181,16 @@ ok "已下载到 $INPUT_TARGET_PATH"
 
 		// ---- 网盘（Cloudreve v4）----
 		&Kind{Kind: "cloudreve-upload", Category: "drive", Label: "网盘上传", Connection: "cloudreve",
-			Description: "把代码目录里的文件或目录上传到 Cloudreve 网盘（目录递归上传，已存在时覆盖）",
+			Description: "把代码目录里的文件或目录上传到 Cloudreve 网盘（目录递归上传），可生成分享链接；上传记录展示在部署历史",
 			Inputs: []Input{
-				{Key: "source", Label: "本地文件或目录（相对代码目录）", Required: true},
+				{Key: "source", Label: "上传路径（每行一个，相对代码目录，支持通配符）", Widget: "textarea", Required: true, Default: "dist"},
 				{Key: "target", Label: "网盘目录", Required: true, Default: "/builds/${FLOW_PIPELINE}"},
+				{Key: "include_dir", Label: "保留目录本身", Widget: "checkbox", Description: "不勾选只上传目录里的内容；勾选后保留目录（如 dist/index.html）"},
+				{Key: "overwrite", Label: "覆盖已有文件", Widget: "checkbox", Default: "true", Description: "同名文件作为新版本上传；不勾选时遇到同名文件报错"},
+				{Key: "clean", Label: "上传前清空目标目录", Widget: "checkbox", Description: "先把目标目录移到网盘回收站再上传，目录里只剩这次的文件"},
+				{Key: "share", Label: "生成分享链接", Widget: "checkbox", Description: "上传后为目标目录创建公开分享链接，输出 CLOUDREVE_SHARE_URL"},
 			},
+			Outputs: []string{"CLOUDREVE_DIR", "CLOUDREVE_FILES", "CLOUDREVE_SIZE", "CLOUDREVE_URL", "CLOUDREVE_SHARE_URL"},
 			script: cloudreveHelper + `cr upload "$INPUT_SOURCE" "$INPUT_TARGET"
 `},
 		&Kind{Kind: "cloudreve-download", Category: "drive", Label: "网盘下载", Connection: "cloudreve",
@@ -281,10 +290,7 @@ def lst(p):
         if not d.get("pagination", {}).get("next_token") and len(d.get("files") or []) < 200: return files, d
         page += 1
 def is_dir(f): return f.get("type") in (1, "folder")
-def upload_file(local, remote_dir):
-    mkdir(remote_dir)
-    _, d = lst(remote_dir)
-    pol = (d.get("storage_policy") or {}).get("id")
+def upload_file(local, remote_dir, overwrite=True, pol=None):
     size = os.path.getsize(local)
     name = os.path.basename(local)
     s = call("PUT", "/file/upload", {"uri": uri(remote_dir + "/" + name), "size": size, "policy_id": pol, "last_modified": int(os.path.getmtime(local) * 1000)}, token=tok)
@@ -300,19 +306,62 @@ def upload_file(local, remote_dir):
             i += 1
             if not b: break
     print(f"[INFO] 上传 {remote_dir.rstrip('/')}/{name}（{size} 字节）")
+    return size
+def truthy(v): return (v or "").strip().lower() not in ("", "false", "0", "no", "n", "off", "否")
+def output(k, v):
+    if os.environ.get("FLOW_OUTPUT"):
+        with open(os.environ["FLOW_OUTPUT"], "a") as f: f.write(f"{k}={v}\n")
+def remove(paths, hard=False):
+    body = json.dumps({"uris": [uri(p) for p in paths], "skip_soft_delete": hard, "unlink": False}).encode()
+    req = urllib.request.Request(base + "/file", data=body, method="DELETE", headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok})
+    d = json.loads(urllib.request.urlopen(req, timeout=60).read() or b"{}")
+    if d.get("code", 0) not in (0, 40016): sys.exit(f"[ERROR] 删除失败：{d.get('msg')}")
 cmd = sys.argv[1]
 if cmd == "upload":
-    src, dst = sys.argv[2], sys.argv[3]
-    if os.path.isdir(src):
-        for root, _, names in os.walk(src):
-            rel = os.path.relpath(root, src)
-            for n in names:
-                upload_file(os.path.join(root, n), dst if rel == "." else dst.rstrip("/") + "/" + rel)
-    elif os.path.isfile(src):
-        upload_file(src, dst)
-    else:
-        sys.exit(f"[ERROR] {src} 不存在")
-    print("[SUCCESS] 上传完成")
+    import glob
+    patterns = [p.strip() for p in sys.argv[2].splitlines() if p.strip()]
+    dst = "/" + sys.argv[3].strip().strip("/")
+    keep, overwrite = truthy(os.environ.get("INPUT_INCLUDE_DIR")), truthy(os.environ.get("INPUT_OVERWRITE", "true"))
+    if not patterns: sys.exit("[ERROR] 上传路径为空")
+    files = []  # (本地文件, 网盘目录)
+    for pat in patterns:
+        hits = sorted(glob.glob(pat))
+        if not hits: sys.exit(f"[ERROR] {pat} 没有匹配的文件")
+        for src in hits:
+            if os.path.isdir(src):
+                top = dst + "/" + os.path.basename(os.path.normpath(src)) if keep else dst
+                for root, _, names in os.walk(src):
+                    rel = os.path.relpath(root, src)
+                    for n in sorted(names):
+                        files.append((os.path.join(root, n), top if rel == "." else top + "/" + rel.replace(os.sep, "/")))
+            else:
+                files.append((src, dst))
+    if truthy(os.environ.get("INPUT_CLEAN")):
+        remove([dst])
+        print(f"[INFO] 已清空 {dst}（旧文件在网盘回收站）")
+    pols, total = {}, 0
+    for local, remote in files:
+        if remote not in pols:
+            mkdir(remote)
+            existing, d = lst(remote)
+            pols[remote] = ((d.get("storage_policy") or {}).get("id"), {f["name"] for f in existing})
+        pol, names = pols[remote]
+        if not overwrite and os.path.basename(local) in names:
+            sys.exit(f"[ERROR] 网盘上已有 {remote}/{os.path.basename(local)}（未勾选覆盖已有文件）")
+        total += upload_file(local, remote, overwrite, pol)
+    server = os.environ["CONN_SERVER"].rstrip("/")
+    output("CLOUDREVE_DIR", dst)
+    output("CLOUDREVE_FILES", str(len(files)))
+    output("CLOUDREVE_SIZE", str(total))
+    output("CLOUDREVE_URL", server + "/home?path=" + urllib.parse.quote("cloudreve://my" + dst, safe=""))
+    if truthy(os.environ.get("INPUT_SHARE")):
+        try:
+            link = call("PUT", "/share", {"uri": uri(dst), "is_private": False, "share_view": True, "permissions": {"anonymous": "BQ==", "everyone": "AQ=="}}, token=tok)
+            output("CLOUDREVE_SHARE_URL", link)
+            print(f"[INFO] 分享链接：{link}")
+        except SystemExit as e:
+            print(f"[WARN] 生成分享链接失败（文件已上传）：{e}")
+    print(f"[SUCCESS] 已上传 {len(files)} 个文件到 {dst}")
 elif cmd == "download":
     src, dst = sys.argv[2], sys.argv[3]
     def dl(remote, local):
@@ -335,11 +384,7 @@ elif cmd == "download":
     print("[SUCCESS] 下载完成")
 elif cmd == "delete":
     paths = [p.strip() for p in sys.argv[2].splitlines() if p.strip()]
-    hard = sys.argv[3] == "true"
-    body = json.dumps({"uris": [uri(p) for p in paths], "skip_soft_delete": hard, "unlink": False}).encode()
-    req = urllib.request.Request(base + "/file", data=body, method="DELETE", headers={"Content-Type": "application/json", "Authorization": "Bearer " + tok})
-    d = json.loads(urllib.request.urlopen(req, timeout=60).read() or b"{}")
-    if d.get("code", 0) not in (0, 40016): sys.exit(f"[ERROR] 删除失败：{d.get('msg')}")
+    remove(paths, sys.argv[3] == "true")
     print("[SUCCESS] 已删除 " + "、".join(paths))
 elif cmd == "mkdir":
     for p in [p.strip() for p in sys.argv[2].splitlines() if p.strip()]:

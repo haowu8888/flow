@@ -48,7 +48,7 @@ func (e *Engine) DeleteFinishedRuns(ctx context.Context, pipelineID string) (int
 
 func (e *Engine) deleteBlobs(ctx context.Context, keys []string) {
 	for _, k := range keys {
-		if err := e.blobs.Delete(ctx, k); err != nil {
+		if err := e.removeBlob(ctx, k); err != nil {
 			e.logf("delete artifact blob %s: %v", k, err)
 		}
 	}

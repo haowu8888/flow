@@ -103,6 +103,18 @@ stages:
 		len(deps[0].Hosts) != 2 || deps[0].FinishedAt == nil {
 		t.Errorf("deployments = %+v", deps)
 	}
+	// 流水线的部署历史里有这次主机部署
+	var hist struct {
+		Items []struct {
+			Deployments []model.Deployment `json:"deployments"`
+		} `json:"items"`
+	}
+	if len(deps) == 1 {
+		getJSON(t, ts, "/api/pipelines/"+deps[0].PipelineID+"/deliveries", &hist)
+	}
+	if len(deps) != 1 || len(hist.Items) != 1 || len(hist.Items[0].Deployments) != 1 || hist.Items[0].Deployments[0].ID != deps[0].ID {
+		t.Errorf("deliveries = %+v", hist)
+	}
 
 	// 主机公钥不一致时拒绝连接，后续主机跳过。
 	other := sshtest.Start(t)

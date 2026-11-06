@@ -33,7 +33,10 @@ stages:
 		t.Fatalf("trigger = %+v", tr)
 	}
 
-	push := `{"ref":"refs/heads/main","after":"deadbeef","repository":{"full_name":"acme/app"}}`
+	push := `{"ref":"refs/heads/main","before":"cafe0001","after":"deadbeef","repository":{"full_name":"acme/app"},
+		"project":{"web_url":"https://gitlab.example.com/acme/app"},"user_username":"lin","total_commits_count":3,
+		"commits":[{"id":"beef0001","message":"fix: a\n\nbody","author":{"name":"Lin"},"url":"https://gitlab.example.com/acme/app/-/commit/beef0001"},
+			{"id":"deadbeef","message":"feat: b","author":{"name":"Zed"}}]}`
 	code, body := hook(t, ts, tr.ID, http.Header{"X-Gitlab-Event": {"Push Hook"}, "X-Gitlab-Token": {tr.Secret}}, push)
 	if code != http.StatusAccepted {
 		t.Fatalf("webhook = %d: %s", code, body)
@@ -45,6 +48,12 @@ stages:
 	detail := waitRun(t, ts, res.Run.ID)
 	if detail.Run.Status != model.StatusSuccess || detail.Run.Trigger != "webhook" {
 		t.Fatalf("run = %+v", detail.Run)
+	}
+	// 触发详情：提交列表、推送人、仓库地址
+	if ti := detail.Run.TriggerInfo; ti == nil || ti.Provider != "gitlab" || ti.Pusher != "lin" || ti.Branch != "main" || ti.Before != "cafe0001" ||
+		ti.RepoURL != "https://gitlab.example.com/acme/app" || ti.TotalCommits != 3 || len(ti.Commits) != 2 ||
+		ti.Commits[0].Message != "fix: a" || ti.Commits[0].Author != "Lin" || ti.Commits[1].ID != "deadbeef" {
+		t.Errorf("trigger info = %+v", ti)
 	}
 	if log := getText(t, ts, "/api/jobs/"+detail.Jobs[0].ID+"/logs"); !strings.Contains(log, "ref=main sha=deadbeef via=webhook target=staging") {
 		t.Errorf("log:\n%s", log)

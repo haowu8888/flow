@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"errors"
@@ -192,6 +193,7 @@ func (e *Engine) HandleWebhook(ctx context.Context, triggerID string, h http.Hea
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	var env map[string]string
+	var info *model.TriggerInfo
 	switch {
 	case ev.Push != nil:
 		if ev.Push.Deleted {
@@ -207,6 +209,7 @@ func (e *Engine) HandleWebhook(ctx context.Context, triggerID string, h http.Hea
 			return &WebhookResult{Skipped: fmt.Sprintf("commit message contains %s", tag)}, nil
 		}
 		env = ev.Push.Env()
+		info = pushInfo(ev.Provider, ev.Push)
 	case ev.PR != nil:
 		pr := ev.PR
 		if !pr.Triggers() {
@@ -222,6 +225,8 @@ func (e *Engine) HandleWebhook(ctx context.Context, triggerID string, h http.Hea
 			return &WebhookResult{Skipped: fmt.Sprintf("pull request title contains %s", tag)}, nil
 		}
 		env = pr.Env()
+		info = &model.TriggerInfo{Provider: ev.Provider, Event: trigger.KindPullRequest, Pusher: pr.Author, Repo: pr.Repo, RepoURL: pr.URL,
+			Ref: pr.Ref, Branch: pr.SourceBranch + " → " + pr.TargetBranch, After: pr.Commit}
 	}
 
 	var run *model.Run
@@ -239,6 +244,11 @@ func (e *Engine) HandleWebhook(ctx context.Context, triggerID string, h http.Hea
 		var err error
 		if run, invalid, err = e.fireInTx(ctx, tx, t, nil, mergeEnv(t.Env, env)); err != nil {
 			return err
+		}
+		if run != nil && info != nil {
+			if err := tx.SetRunTriggerInfo(ctx, run.ID, info); err != nil {
+				return err
+			}
 		}
 		if ev.DeliveryID != "" && run != nil {
 			return tx.SetDeliveryRun(ctx, t.ID, ev.DeliveryID, run.ID)
@@ -263,6 +273,26 @@ func (e *Engine) HandleWebhook(ctx context.Context, triggerID string, h http.Hea
 		return nil, err
 	}
 	return &WebhookResult{Run: run}, nil
+}
+
+// maxTriggerCommits 是触发详情中保存的提交数上限。
+const maxTriggerCommits = 20
+
+// pushInfo 把推送事件整理为触发详情。
+func pushInfo(provider string, p *trigger.Push) *model.TriggerInfo {
+	info := &model.TriggerInfo{Provider: provider, Event: trigger.KindPush, Pusher: p.Pusher, Repo: p.Repo, RepoURL: p.RepoWeb,
+		Ref: p.Ref, Branch: cmp.Or(p.Branch(), p.Tag()), Before: p.Before, After: p.Commit, CompareURL: p.CompareURL, TotalCommits: p.TotalCommits}
+	if strings.Trim(info.Before, "0") == "" {
+		info.Before = "" // 新建分支
+	}
+	commits := p.Commits
+	if len(commits) > maxTriggerCommits {
+		commits = commits[len(commits)-maxTriggerCommits:]
+	}
+	for _, c := range commits {
+		info.Commits = append(info.Commits, model.TriggerCommit{ID: c.ID, Message: c.Message, Author: c.Author, URL: c.URL})
+	}
+	return info
 }
 
 // skipCI 返回提交信息中的跳过标记（与 GitHub / GitLab 一致），没有时返回空。
@@ -397,6 +427,9 @@ func (e *Engine) FireGeneric(ctx context.Context, pipelineID, token string, body
 		run, invalid, err = e.fireInTx(ctx, tx, t, nil, env)
 		if err == nil && invalid != nil {
 			err = invalid
+		}
+		if err == nil && run != nil {
+			err = tx.SetRunTriggerInfo(ctx, run.ID, &model.TriggerInfo{Provider: "generic", Vars: res.Vars})
 		}
 		return err
 	})

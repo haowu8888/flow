@@ -83,6 +83,7 @@ type Run struct {
 	ConcurrencyGroup string            `json:"concurrency_group,omitempty"`
 	ConcurrencyMax   int               `json:"concurrency_max,omitempty"` // 并发组同时执行的上限（0 视为 1）
 	Remark           string            `json:"remark,omitempty"`          // 运行备注
+	TriggerInfo      *TriggerInfo      `json:"trigger_info,omitempty"`    // Webhook 触发的详情
 	Env              map[string]string `json:"env,omitempty"`
 	Notify           []NotifyTarget    `json:"-"` // 创建时从流水线定义快照，结束时发送
 	NotifyDone       bool              `json:"-"`
@@ -96,6 +97,31 @@ func (r *Run) Clone() *Run {
 	c.Env = maps.Clone(r.Env)
 	c.Notify = slices.Clone(r.Notify)
 	return &c
+}
+
+// TriggerInfo 是 Webhook 触发的详情（展示用）。
+type TriggerInfo struct {
+	Provider     string          `json:"provider,omitempty"` // github / gitlab / gitea / gogs / gitee / generic
+	Event        string          `json:"event,omitempty"`    // push / pull_request
+	Pusher       string          `json:"pusher,omitempty"`
+	Repo         string          `json:"repo,omitempty"`
+	RepoURL      string          `json:"repo_url,omitempty"` // 仓库网页地址
+	Ref          string          `json:"ref,omitempty"`
+	Branch       string          `json:"branch,omitempty"`
+	Before       string          `json:"before,omitempty"`
+	After        string          `json:"after,omitempty"`
+	CompareURL   string          `json:"compare_url,omitempty"`
+	Commits      []TriggerCommit `json:"commits,omitempty"`
+	TotalCommits int             `json:"total_commits,omitempty"`
+	Vars         []string        `json:"vars,omitempty"` // 流水线 Webhook 覆盖的变量名（不保存值，可能含私密变量）
+}
+
+// TriggerCommit 是推送中的一个提交。
+type TriggerCommit struct {
+	ID      string `json:"id"`
+	Message string `json:"message,omitempty"`
+	Author  string `json:"author,omitempty"`
+	URL     string `json:"url,omitempty"`
 }
 
 // NotifyTarget 是运行结束时的通知渠道（url / secret 可含 ${密钥名}，发送时替换）。
@@ -266,6 +292,8 @@ type StepState struct {
 	ExitCode   int        `json:"exit_code,omitempty"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	// Outputs 是该步骤写入的任务输出（如网盘上传的 CLOUDREVE_DIR），用于运行详情与部署历史展示。
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // ResetSteps 把步骤进度恢复为未开始（Job 重新排队时）。
@@ -422,6 +450,10 @@ type Artifact struct {
 	CreatedAt time.Time `json:"created_at"`
 	// ExpiresAt 之后由保留策略清理；为空表示永久保留。流水线最近一次成功运行的产物不会被清理。
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// URL 是免登录下载地址（带签名，不入库），由 API 在返回时填充。
+	URL string `json:"url,omitempty"`
+	// Storage 是存放位置的说明（存到对象存储连接时为「连接名 / Bucket」，不入库）。
+	Storage string `json:"storage,omitempty"`
 }
 
 type Tenant struct {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { copyText } from '../format'
 
-export function CopyButton({ text }: { text: string }) {
+export function CopyButton({ text, label = '复制', title }: { text: string; label?: string; title?: string }) {
   const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
   async function copy() {
     try {
@@ -13,8 +13,8 @@ export function CopyButton({ text }: { text: string }) {
     setTimeout(() => setState('idle'), 1500)
   }
   return (
-    <button className="btn link" onClick={copy}>
-      {state === 'ok' ? '已复制' : state === 'fail' ? '复制失败' : '复制'}
+    <button className="btn link" onClick={copy} title={title}>
+      {state === 'ok' ? '已复制' : state === 'fail' ? '复制失败' : label}
     </button>
   )
 }

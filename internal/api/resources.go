@@ -94,6 +94,7 @@ func (s *server) listArtifacts(w http.ResponseWriter, r *http.Request, p *auth.P
 		return
 	}
 	list, err := s.eng.Artifacts(r.Context(), r.PathValue("id"))
+	s.fillArtifactURLs(r, list)
 	respond(w, http.StatusOK, nonNil(list), err)
 }
 
@@ -105,6 +106,25 @@ func (s *server) downloadArtifact(w http.ResponseWriter, r *http.Request, p *aut
 	if err == nil {
 		_, err = s.runOf(r.Context(), a.RunID, p, model.PermView)
 	}
+	if err != nil {
+		respond(w, 0, nil, err)
+		return
+	}
+	s.streamArtifact(w, r, a)
+}
+
+// fillArtifactURLs 填充构建物的免登录下载地址（供复制分享）。
+func (s *server) fillArtifactURLs(r *http.Request, list []*model.Artifact) {
+	base := s.serverURL(r)
+	for _, a := range list {
+		a.URL = base + s.eng.ArtifactLinkPath(a)
+		a.Storage = s.eng.ArtifactStorage(r.Context(), a)
+	}
+}
+
+// openArtifact 是构建物的免登录下载（ARTIFACT_<名称>_URL）：以链接中的签名鉴权。
+func (s *server) openArtifact(w http.ResponseWriter, r *http.Request) {
+	a, err := s.eng.ArtifactByLink(r.Context(), r.PathValue("id"), r.URL.Query().Get("sig"))
 	if err != nil {
 		respond(w, 0, nil, err)
 		return

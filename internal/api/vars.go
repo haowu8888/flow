@@ -41,6 +41,7 @@ func (s *server) routeVars(mux *http.ServeMux, viewer, dev, admin func(handler) 
 	mux.HandleFunc("POST /api/pipeline-groups", dev(s.createGroup))
 	mux.HandleFunc("PUT /api/pipeline-groups/{name}", dev(s.renameGroup))
 	mux.HandleFunc("DELETE /api/pipeline-groups/{name}", dev(s.deleteGroup))
+	mux.HandleFunc("GET /api/open/artifacts/{id}/download", s.openArtifact)
 	mux.HandleFunc("GET /api/open/approve/{id}", s.approveLink)
 	mux.HandleFunc("POST /api/open/approve/{id}", s.approveLink)
 }

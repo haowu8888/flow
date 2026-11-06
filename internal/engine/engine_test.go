@@ -130,6 +130,34 @@ func TestCancelRun(t *testing.T) {
 	})
 }
 
+// 强制结束：运行中的任务立即标记为已取消，节点之后的心跳 / 上报都因租约失效被拒绝。
+func TestForceCancelRun(t *testing.T) {
+	storetest.ForEach(t, func(t *testing.T, s store.Store) {
+		e, run, _ := setup(t, s, dagYAML)
+		a := claim(t, e, "a")
+		if _, err := e.CancelRun(ctx, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		r, err := e.ForceCancelRun(ctx, run.ID, "alice")
+		if err != nil || r.Status != model.StatusCanceled {
+			t.Fatalf("force cancel = %+v, %v", r, err)
+		}
+		j, _ := e.Job(ctx, a.ID)
+		if j.Status != model.StatusCanceled || !strings.Contains(j.Error, "alice") {
+			t.Errorf("job = %s %q", j.Status, j.Error)
+		}
+		if _, err := e.Heartbeat(ctx, a.ID, "r1"); !errors.Is(err, ErrLeaseLost) {
+			t.Errorf("heartbeat after force cancel = %v", err)
+		}
+		if err := e.Complete(ctx, a.ID, "r1", model.StatusSuccess, 0, ""); !errors.Is(err, ErrLeaseLost) {
+			t.Errorf("complete after force cancel = %v", err)
+		}
+		if qw, err := e.QueueWait(ctx, run.ID); err != nil || qw != nil {
+			t.Errorf("queue wait of finished run = %+v, %v", qw, err)
+		}
+	})
+}
+
 func TestReapExpiredLease(t *testing.T) {
 	storetest.ForEach(t, func(t *testing.T, s store.Store) {
 		e, run, clock := setup(t, s, dagYAML)

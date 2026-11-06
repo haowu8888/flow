@@ -92,7 +92,35 @@ export interface PipelineRevision {
   created_at: string
 }
 
+/** Webhook 触发的详情。 */
+export interface TriggerInfo {
+  provider?: string
+  event?: string
+  pusher?: string
+  repo?: string
+  repo_url?: string
+  ref?: string
+  branch?: string
+  before?: string
+  after?: string
+  compare_url?: string
+  commits?: { id: string; message?: string; author?: string; url?: string }[]
+  total_commits?: number
+  /** 流水线 Webhook 覆盖的变量名 */
+  vars?: string[]
+}
+
+/** 运行的排队原因。 */
+export interface QueueWait {
+  group?: string
+  running?: number
+  limit?: number
+  ahead?: number
+  jobs?: { job: string; labels?: string[]; online: number; reason: string }[]
+}
+
 export interface Run {
+  trigger_info?: TriggerInfo
   id: string
   pipeline_id: string
   number: number
@@ -164,6 +192,8 @@ export interface StepState {
   exit_code?: number
   started_at?: string
   finished_at?: string
+  /** 本步骤写入的任务输出 */
+  outputs?: Record<string, string>
 }
 
 /** 部署环境。 */
@@ -528,6 +558,41 @@ export interface Artifact {
   created_at: string
   /** 之后按保留策略清理；为空表示永久保留 */
   expires_at?: string
+  /** 免登录下载地址（带签名） */
+  url?: string
+  /** 存到对象存储连接时为「连接名 / Bucket」 */
+  storage?: string
+}
+
+/** 网盘上传（cloudreve-upload 步骤）的结果。 */
+export interface DriveUpload {
+  job_name: string
+  step: string
+  dir: string
+  files: number
+  size?: number
+  url?: string
+  share_url?: string
+}
+
+/** 对象存储上传（oss-upload 步骤）的结果。 */
+export interface ObjectUpload {
+  job_name: string
+  step: string
+  bucket?: string
+  path: string
+  url?: string
+}
+
+/** 部署历史的一行：一次运行交付的构建物、网盘 / 对象存储上传与主机部署。 */
+export interface Delivery {
+  seq: number
+  run: Run
+  started_at?: string
+  artifacts: Artifact[]
+  drives: DriveUpload[]
+  objects: ObjectUpload[]
+  deployments: Deployment[]
 }
 
 export type TemplateKind = 'steps' | 'pipeline'
@@ -628,6 +693,8 @@ export interface StepKind {
   label: string
   description: string
   connection?: string
+  /** 服务连接选填 */
+  connection_optional?: boolean
   image?: string
   inputs: StepInput[]
   outputs?: string[]

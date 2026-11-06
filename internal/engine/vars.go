@@ -521,7 +521,7 @@ func checkKinds(spec *pipeline.Spec) error {
 				if _, _, err := k.Expand(step.With); err != nil {
 					return fmt.Errorf("%w: job %q step %d: %v", ErrInvalid, j.Name, i+1, err)
 				}
-				if k.Connection != "" && step.Connection == "" {
+				if k.Connection != "" && !k.ConnectionOptional && step.Connection == "" {
 					return fmt.Errorf("%w: job %q step %d (%s) needs a %s service connection", ErrInvalid, j.Name, i+1, k.Label, k.Connection)
 				}
 			}

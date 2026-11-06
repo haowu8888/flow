@@ -125,6 +125,8 @@ type StepRequest struct {
 	Index    int          `json:"index"`
 	Status   model.Status `json:"status"`
 	ExitCode int          `json:"exit_code,omitempty"`
+	// Outputs 是步骤成功结束时本步骤写入的任务输出。
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // HostsRequest 上报部署任务各主机的完整进度。

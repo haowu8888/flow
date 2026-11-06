@@ -104,7 +104,7 @@ const (
 	pipelineCols = `id, tenant_id, name, yaml, created_at, updated_at, version, updated_by, group_name,
 		created_by, description, archived, deleted_at, is_public`
 	runCols = `id, tenant_id, pipeline_id, number, status, trigger, env, created_at, started_at, finished_at,
-		created_by, notify, notify_done, pipeline_version, git_commit, rollback_of, concurrency_group, artifacts_from, remark, concurrency_max`
+		created_by, notify, notify_done, pipeline_version, git_commit, rollback_of, concurrency_group, artifacts_from, remark, concurrency_max, trigger_info`
 	jobCols = `id, tenant_id, run_id, seq, name, stage, stage_index, needs, image, env, steps, status,
 		runner_id, lease_until, cancel_requested, exit_code, error, created_at, started_at, finished_at,
 		runs_on, options, attempt, decided_by, step_states, host_states, outputs, notify_waiting, notify_done, dispatched_at`
@@ -259,9 +259,9 @@ func (s pgq) CreateRun(ctx context.Context, r *model.Run, jobs []*model.Job) err
 	if err := s.q.QueryRow(ctx, `SELECT COALESCE(MAX(number), 0) + 1 FROM runs WHERE pipeline_id = $1`, r.PipelineID).Scan(&r.Number); err != nil {
 		return err
 	}
-	if _, err := s.q.Exec(ctx, `INSERT INTO runs (`+runCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+	if _, err := s.q.Exec(ctx, `INSERT INTO runs (`+runCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		r.ID, r.TenantID, r.PipelineID, r.Number, r.Status, r.Trigger, nonNilMap(r.Env), r.CreatedAt, r.StartedAt, r.FinishedAt,
-		r.CreatedBy, nonNil(r.Notify), r.NotifyDone, r.PipelineVersion, r.Commit, r.RollbackOf, r.ConcurrencyGroup, r.ArtifactsFrom, r.Remark, r.ConcurrencyMax); err != nil {
+		r.CreatedBy, nonNil(r.Notify), r.NotifyDone, r.PipelineVersion, r.Commit, r.RollbackOf, r.ConcurrencyGroup, r.ArtifactsFrom, r.Remark, r.ConcurrencyMax, r.TriggerInfo); err != nil {
 		return mapErr(err)
 	}
 	b := &pgx.Batch{}
@@ -499,7 +499,7 @@ func scanRun(row pgx.Row) (*model.Run, error) {
 	var r model.Run
 	if err := row.Scan(&r.ID, &r.TenantID, &r.PipelineID, &r.Number, &r.Status, &r.Trigger, &r.Env,
 		&r.CreatedAt, &r.StartedAt, &r.FinishedAt, &r.CreatedBy, &r.Notify, &r.NotifyDone, &r.PipelineVersion,
-		&r.Commit, &r.RollbackOf, &r.ConcurrencyGroup, &r.ArtifactsFrom, &r.Remark, &r.ConcurrencyMax); err != nil {
+		&r.Commit, &r.RollbackOf, &r.ConcurrencyGroup, &r.ArtifactsFrom, &r.Remark, &r.ConcurrencyMax, &r.TriggerInfo); err != nil {
 		return nil, mapErr(err)
 	}
 	return &r, nil

@@ -70,6 +70,11 @@ stages:
 	if b.Run.Status != model.StatusQueued || c.Run.Status != model.StatusQueued || other.Run.Status == model.StatusQueued {
 		t.Fatalf("statuses = %s %s %s", b.Run.Status, c.Run.Status, other.Run.Status)
 	}
+	var qw engine.QueueWait
+	getJSON(t, ts, "/api/runs/"+c.Run.ID+"/queue", &qw)
+	if qw.Group != "deploy-prod" || qw.Running != 1 || qw.Limit != 1 || qw.Ahead != 1 {
+		t.Errorf("queue wait = %+v", qw)
+	}
 	if got := post[protocol.RunDetail](t, ts, "/api/runs/"+b.Run.ID+"/cancel", "", http.StatusOK); got.Run.Status != model.StatusCanceled {
 		t.Errorf("cancel queued = %s", got.Run.Status)
 	}

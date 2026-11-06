@@ -262,6 +262,9 @@ type Tx interface {
 	GetTemplateByName(ctx context.Context, tenantID string, kind model.TemplateKind, name string) (*model.Template, error)
 	GetTemplateRevisionByName(ctx context.Context, tenantID string, kind model.TemplateKind, name string, version int) (*model.TemplateRevision, error)
 
+	// SetRunTriggerInfo 记录运行的触发详情。
+	SetRunTriggerInfo(ctx context.Context, id string, info *model.TriggerInfo) error
+
 	// LockConcurrency 在事务内独占租户的一个并发组（PostgreSQL 用事务级 advisory lock），事务结束释放。
 	LockConcurrency(ctx context.Context, tenantID, group string) error
 	// ActiveRuns 返回租户内某个并发组中尚未结束的运行，按创建时间正序。

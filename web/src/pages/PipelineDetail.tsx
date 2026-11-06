@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { parse as parseYaml } from 'yaml'
 import { api, ApiError } from '../api'
 import { Icon } from '../components/Icon'
 import { RunButton } from '../components/RunDialog'
@@ -6,8 +7,8 @@ import { SecretSection } from '../components/SecretSection'
 import { StatusBadge } from '../components/StatusBadge'
 import { GenericWebhook, TriggerEditContext, TriggerSection } from '../components/TriggerSection'
 import { PipelineMembers } from '../components/PipelineMembers'
+import { Deliveries } from '../components/Deliveries'
 import { PipelineStats } from './PipelineStats'
-import { DeploymentsTab } from './Hosts'
 import { RunDetail } from './RunDetail'
 import { pipelineSource, RevisionHistory } from '../editor/History'
 import { SettingsCard } from '../editor/Panels'
@@ -15,7 +16,7 @@ import { PipelineEditor, type EditorHandle } from '../editor/PipelineEditor'
 import { fmtDuration, fmtShort, fmtTime, shortSha, triggerLabel } from '../format'
 import { usePolling, useTicker } from '../hooks'
 import { href, navigate, setLeaveGuard, type EditSection, type PipelineTab } from '../router'
-import { hasPerm, isTerminal, type Environment, type Pipeline, type Run } from '../types'
+import { hasPerm, isTerminal, type Pipeline, type Run } from '../types'
 
 const tabs: [PipelineTab, string][] = [
   ['latest', '最近运行'],
@@ -71,7 +72,7 @@ export function PipelineDetail({ id, tab, section }: { id: string; tab: Pipeline
 
       {tab === 'latest' && <LatestRun pipeline={pipeline} canRun={hasPerm(pipeline, 'run')} />}
       {tab === 'runs' && <RunsTab pipeline={pipeline} />}
-      {tab === 'deploys' && <Deploys pipelineId={id} />}
+      {tab === 'deploys' && <Deliveries pipeline={pipeline} repo={pipelineRepo(pipeline.yaml)} />}
       {tab === 'stats' && <PipelineStats pipelineId={id} />}
     </section>
   )
@@ -106,12 +107,14 @@ function LatestRun({ pipeline, canRun }: { pipeline: Pipeline; canRun: boolean }
   return <RunDetail key={data[0].id} id={data[0].id} embedded />
 }
 
-function Deploys({ pipelineId }: { pipelineId: string }) {
-  const [envs, setEnvs] = useState<Environment[]>([])
-  useEffect(() => {
-    api.listEnvironments().then(setEnvs, () => {})
-  }, [])
-  return <DeploymentsTab envs={envs} pipelineId={pipelineId} />
+/** 流水线 YAML 中的代码源（用于提交链接）。 */
+function pipelineRepo(yaml: string) {
+  try {
+    const src = (parseYaml(yaml) as { source?: { url?: string; branch?: string } } | null)?.source
+    return src?.url ? { url: src.url, branch: src.branch } : undefined
+  } catch {
+    return undefined
+  }
 }
 
 const RUN_PAGE = 30

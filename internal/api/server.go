@@ -92,6 +92,7 @@ func NewHandler(eng *engine.Engine, authSvc *auth.Service, cfg Config) http.Hand
 	mux.HandleFunc("DELETE /api/pipelines/{id}", dev(s.deletePipeline))
 	mux.HandleFunc("GET /api/pipelines/{id}/revisions", viewer(s.listRevisions))
 	mux.HandleFunc("GET /api/pipelines/{id}/stats", viewer(s.pipelineStats))
+	mux.HandleFunc("GET /api/pipelines/{id}/deliveries", viewer(s.pipelineDeliveries))
 	mux.HandleFunc("GET /api/pipelines/{id}/revisions/{version}", viewer(s.getRevision))
 	mux.HandleFunc("POST /api/pipelines/{id}/revisions/{version}/restore", dev(s.restoreRevision))
 	mux.HandleFunc("GET /api/pipelines/summary", viewer(s.pipelineSummary))
@@ -119,6 +120,7 @@ func NewHandler(eng *engine.Engine, authSvc *auth.Service, cfg Config) http.Hand
 	mux.HandleFunc("POST /api/runs/{id}/rollback", dev(s.rollbackRun))
 	mux.HandleFunc("POST /api/runs/{id}/redeploy", dev(s.redeployRun))
 	mux.HandleFunc("GET /api/runs/{id}/tests", viewer(s.listTestReports))
+	mux.HandleFunc("GET /api/runs/{id}/queue", viewer(s.runQueueWait))
 	mux.HandleFunc("GET /api/runs/{id}/artifacts", viewer(s.listArtifacts))
 	mux.HandleFunc("GET /api/artifacts/{id}/download", viewer(s.downloadArtifact))
 	mux.HandleFunc("GET /api/runs/{id}/events", viewer(s.streamRun))
@@ -470,6 +472,26 @@ func (s *server) pipelineStats(w http.ResponseWriter, r *http.Request, p *auth.P
 	respond(w, http.StatusOK, st, err)
 }
 
+// pipelineDeliveries 返回流水线的部署历史：每次运行的构建物、网盘 / 对象存储上传与主机部署。
+func (s *server) pipelineDeliveries(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	pl, err := s.pipelineOf(r.Context(), r.PathValue("id"), p, model.PermView)
+	if err != nil {
+		respond(w, 0, nil, err)
+		return
+	}
+	q := r.URL.Query()
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	items, total, err := s.eng.Deliveries(r.Context(), pl, max(offset, 0), limit)
+	for _, d := range items {
+		s.fillArtifactURLs(r, d.Artifacts)
+	}
+	respond(w, http.StatusOK, map[string]any{"items": items, "total": total}, err)
+}
+
 func (s *server) listRevisions(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	id := r.PathValue("id")
 	if _, err := s.pipelineOf(r.Context(), id, p, model.PermView); err != nil {
@@ -646,12 +668,28 @@ func (s *server) cancelRun(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		respond(w, 0, nil, err)
 		return
 	}
-	run, err := s.eng.CancelRun(r.Context(), r.PathValue("id"))
+	var run *model.Run
+	var err error
+	if r.URL.Query().Get("force") == "true" {
+		run, err = s.eng.ForceCancelRun(r.Context(), r.PathValue("id"), p.User.Username)
+	} else {
+		run, err = s.eng.CancelRun(r.Context(), r.PathValue("id"))
+	}
 	if err != nil {
 		respond(w, 0, nil, err)
 		return
 	}
 	s.writeRunDetail(w, r, http.StatusOK, run.ID)
+}
+
+// runQueueWait 返回运行的排队原因（并发组名额 / 等待构建节点），不在等待时为 null。
+func (s *server) runQueueWait(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	if _, err := s.runOf(r.Context(), r.PathValue("id"), p, model.PermView); err != nil {
+		respond(w, 0, nil, err)
+		return
+	}
+	qw, err := s.eng.QueueWait(r.Context(), r.PathValue("id"))
+	respond(w, http.StatusOK, qw, err)
 }
 
 func (s *server) retryRun(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
