@@ -71,6 +71,8 @@ export interface JobSpec {
 
 export interface DeploySpec {
   hosts?: string
+  /** 部署的上游构建物名称（「构建物上传」步骤的 name） */
+  artifact?: string
   upload?: string
   target?: string
   batch?: number
@@ -235,6 +237,7 @@ function normalizeJob(v: unknown): JobSpec {
     approvers: strList(j.approvers),
     deploy: obj(j.deploy) && {
       hosts: str(obj(j.deploy)!.hosts),
+      artifact: str(obj(j.deploy)!.artifact),
       upload: str(obj(j.deploy)!.upload),
       target: str(obj(j.deploy)!.target),
       batch: typeof obj(j.deploy)!.batch === 'number' ? (obj(j.deploy)!.batch as number) : undefined,

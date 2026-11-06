@@ -3747,6 +3747,17 @@ td.nowrap {
 .delivery-file .tag {
   margin-left: 2px;
 }
+.delivery-file a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.delivery-deploy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .pager {
   display: flex;
   align-items: center;

@@ -1,4 +1,4 @@
-# 前端站点：npm 构建 → 上传 dist 到 Nginx 站点目录并重载。
+# 前端站点：npm 构建 → dist 打成产物包 → 解压到 Nginx 站点目录并重载（部署历史记录产物包版本）。
 name: web-site
 source:
   url: https://git.example.com/team/web.git
@@ -9,13 +9,13 @@ stages:
       - name: build
         image: node:20
         cache: {key: "npm-${FLOW_PIPELINE}", paths: [node_modules]}
-        artifacts: [dist]
         steps:
           - {name: install, run: npm ci}
           - {name: build, run: npm run build}
+          - {name: 产物包, kind: artifact-upload, with: {name: site, paths: dist}}
   - name: deploy
     jobs:
       - name: deploy
-        deploy: {hosts: web-servers, upload: dist, target: /usr/share/nginx/html/site, batch: 1000}
+        deploy: {hosts: web-servers, artifact: site, target: /usr/share/nginx/html/site, batch: 1000}
         steps:
           - {name: reload nginx, run: nginx -t && nginx -s reload}

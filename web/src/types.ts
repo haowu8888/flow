@@ -297,6 +297,8 @@ export interface Deployment {
   created_by?: string
   started_at: string
   finished_at?: string
+  /** 部署的构建物（deploy.artifact） */
+  artifact?: { id: string; name: string; version?: string; format?: string; size: number }
 }
 
 export interface TestCase {

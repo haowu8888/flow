@@ -42,7 +42,10 @@ export function Deliveries({ pipeline, repo }: { pipeline: Pipeline; repo?: { ur
 
   function items(d: Delivery): Item[] {
     const out: Item[] = []
+    // 主机部署的产物包显示在部署行，不再单列
+    const deployed = new Set(d.deployments.map((x) => x.artifact?.id))
     for (const a of d.artifacts) {
+      if (deployed.has(a.id)) continue
       const file = a.name ? `${a.name}.${a.format}` : `${a.job_name}.tar.gz`
       out.push({
         key: a.id,
@@ -110,19 +113,41 @@ export function Deliveries({ pipeline, repo }: { pipeline: Pipeline; repo?: { ur
     )
     for (const dep of d.deployments) {
       const target = dep.environment_name || dep.group_name
+      const pkg = dep.artifact
+      const kept = pkg && d.artifacts.find((a) => a.id === pkg.id)
       out.push({
         key: dep.id,
         kind: '主机部署',
+        size: pkg?.size,
         content: (
-          <span className="delivery-file" title={dep.hosts.join('\n')}>
-            <Icon name="server" size={14} />
-            {dep.environment_name && <span>{dep.environment_name} /</span>}
-            <span className="mono">{dep.group_name}</span>
-            <span className="muted small">{dep.hosts.length} 台</span>
-            {dep.status !== d.run.status && <StatusBadge status={dep.status} />}
+          <span className="delivery-deploy">
+            {pkg && (
+              <span className="delivery-file">
+                {kept ? (
+                  <a href={api.artifactURL(pkg.id)} download title={`点击下载（${fmtExpiry(kept.expires_at)}）`}>
+                    <Icon name="download" size={14} />
+                    {pkg.name}.{pkg.format || 'zip'}
+                  </a>
+                ) : (
+                  <span className="muted" title="构建物已清理">
+                    <Icon name="box" size={14} />
+                    {pkg.name}.{pkg.format || 'zip'}
+                  </span>
+                )}
+                {pkg.version && <span className="tag">{/^v/i.test(pkg.version) ? pkg.version : `v${pkg.version}`}</span>}
+                <span className="muted">→</span>
+              </span>
+            )}
+            <span className="delivery-file" title={dep.hosts.join('\n')}>
+              <Icon name="server" size={14} />
+              {dep.environment_name && <span>{dep.environment_name} /</span>}
+              <span className="mono">{dep.group_name}</span>
+              <span className="muted small">{dep.hosts.length} 台</span>
+              {dep.status !== d.run.status && <StatusBadge status={dep.status} />}
+            </span>
           </span>
         ),
-        action: canDeploy && dep.status === 'success' && (
+        action: canDeploy && dep.status === 'success' && (!pkg || kept) && (
           <button className="btn small" disabled={busy === d.run.id + dep.job_name} onClick={() => redeploy(d, dep.job_name, target)} title="回退或重放到这个版本">
             重新部署
           </button>

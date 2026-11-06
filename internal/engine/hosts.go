@@ -640,7 +640,7 @@ func (e *Engine) resolveDeploy(ctx context.Context, j *model.Job) ([]protocol.De
 }
 
 // recordDeployment 在部署任务开始执行时写入部署记录。
-func (e *Engine) recordDeployment(ctx context.Context, j *model.Job, g *model.HostGroup, hosts []protocol.DeployHost) {
+func (e *Engine) recordDeployment(ctx context.Context, j *model.Job, g *model.HostGroup, hosts []protocol.DeployHost, art *model.DeployedArtifact) {
 	run, err := e.store.GetRun(ctx, j.RunID)
 	if err != nil {
 		e.logf("record deployment %s: %v", j.ID, err)
@@ -653,7 +653,7 @@ func (e *Engine) recordDeployment(ctx context.Context, j *model.Job, g *model.Ho
 	}
 	d := &model.Deployment{ID: newID(), TenantID: j.TenantID, PipelineID: p.ID, PipelineName: p.Name, RunID: run.ID,
 		RunNumber: run.Number, JobID: j.ID, JobName: j.Name, GroupName: j.Deploy.Group, Commit: run.Commit,
-		Status: model.StatusRunning, CreatedBy: run.CreatedBy, StartedAt: e.now()}
+		Status: model.StatusRunning, CreatedBy: run.CreatedBy, StartedAt: e.now(), Artifact: art}
 	for _, h := range hosts {
 		d.Hosts = append(d.Hosts, h.Name)
 	}
@@ -665,6 +665,33 @@ func (e *Engine) recordDeployment(ctx context.Context, j *model.Job, g *model.Ho
 	if err := e.store.CreateDeployment(ctx, d); err != nil {
 		e.logf("record deployment %s: %v", j.ID, err)
 	}
+}
+
+// namedArtifact 在上游命名构建物中按名称查找要部署的构建物（多个上游同名时取最后一个，与「下载构建物」一致）。
+func namedArtifact(named []*model.Artifact, name string) *model.DeployedArtifact {
+	var found *model.Artifact
+	for _, a := range named {
+		if a.Name == name {
+			found = a
+		}
+	}
+	if found == nil {
+		return nil
+	}
+	return &model.DeployedArtifact{ID: found.ID, Name: found.Name, Version: found.Version, Format: found.Format, Size: found.Size}
+}
+
+func namedArtifactMissing(named []*model.Artifact, name string) string {
+	var names []string
+	for _, a := range named {
+		if !slices.Contains(names, a.Name) {
+			names = append(names, a.Name)
+		}
+	}
+	if len(names) == 0 {
+		return fmt.Sprintf("deploy.artifact: 上游任务没有上传构建物 %q（在上游任务中添加「构建物上传」步骤，名称填 %s）", name, name)
+	}
+	return fmt.Sprintf("deploy.artifact: 上游任务没有名为 %q 的构建物（可用：%s）", name, strings.Join(names, "、"))
 }
 
 func (e *Engine) Deployments(ctx context.Context, tenantID string, f store.DeploymentFilter) ([]*model.Deployment, error) {

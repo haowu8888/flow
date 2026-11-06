@@ -1,4 +1,4 @@
-# Java 服务：Maven 打包 → 部署测试环境 → 部署生产环境（生产环境可在「环境与主机」中设置部署审批）。
+# Java 服务：Maven 打包 jar 产物包 → 部署测试环境 → 部署生产环境（生产环境可在「环境与主机」中设置部署审批）。
 name: java-service
 source:
   url: https://git.example.com/team/service.git
@@ -9,15 +9,15 @@ stages:
       - name: package
         image: maven:3.9-eclipse-temurin-21
         cache: {key: m2, paths: [.m2]}
-        artifacts: [target]
         reports: {junit: ["target/surefire-reports/*.xml"]}
         steps:
           - name: test & package
             run: mvn -B -Dmaven.repo.local=.m2 package
+          - {name: 产物包, kind: artifact-upload, with: {name: service, paths: target/*.jar}}
   - name: deploy-test
     jobs:
       - name: deploy-test
-        deploy: {hosts: test-servers, upload: target, target: /opt/apps/service}
+        deploy: {hosts: test-servers, artifact: service, target: /opt/apps/service}
         steps:
           - name: restart
             run: |
@@ -30,7 +30,7 @@ stages:
   - name: deploy-prod
     jobs:
       - name: deploy-prod
-        deploy: {hosts: prod-servers, upload: target, target: /opt/apps/service, batch: 1}
+        deploy: {hosts: prod-servers, artifact: service, target: /opt/apps/service, batch: 1}
         steps:
           - name: restart
             run: |

@@ -234,10 +234,12 @@ type Job struct {
 	MatrixValues    []string      `yaml:"-"` // 展开后的取值（KEY=VALUE），用于展示
 }
 
-// Deploy 是主机部署任务的目标：先把 upload 上传到每台主机的 target 目录，再在该目录执行步骤。
+// Deploy 是主机部署任务的目标：先把 artifact（或 upload）发到每台主机的 target 目录，再在该目录执行步骤。
 type Deploy struct {
 	Hosts  string `yaml:"hosts"`  // 主机组名（在「环境与主机」中维护）
 	Upload string `yaml:"upload"` // 可选：上传工作目录中的文件或目录（如上游产物 dist）
+	// Artifact 是要部署的构建物：上游「构建物上传」的名称，下载后解压到每台主机的 target 目录，并记在部署记录上。
+	Artifact string `yaml:"artifact"`
 	Target string `yaml:"target"` // 远程目录，默认 /tmp/flow-deploy/<流水线名>
 	Batch  int    `yaml:"batch"`  // 每批主机数，默认 1（逐台滚动）；前一批全部成功才继续
 }
@@ -577,6 +579,10 @@ func (j *Job) validate() error {
 			return fmt.Errorf("deploy.batch must be between 1 and %d", maxDeployBatch)
 		case strings.ContainsAny(d.Target, "\n\r'"):
 			return errors.New("deploy.target must not contain quotes or newlines")
+		case d.Artifact != "" && d.Upload != "":
+			return errors.New("deploy.artifact and deploy.upload are mutually exclusive")
+		case strings.ContainsAny(d.Artifact, " \t\n\r/"):
+			return errors.New("deploy.artifact must be an artifact name (as in the upload step)")
 		}
 		if d.Upload != "" {
 			if err := checkRelPath(d.Upload); err != nil {
