@@ -41,7 +41,7 @@ export function splitList(text: string) {
     .filter(Boolean)
 }
 
-const triggerNames: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时', api: 'API', rollback: '回滚' }
+const triggerNames: Record<string, string> = { manual: '手动', webhook: 'Webhook', cron: '定时', api: 'API', rollback: '回滚', generic: '流水线 Webhook' }
 
 /** 运行的触发方式；手动 / API 触发附带操作人，webhook 触发附带分支 / 标签与短提交号。 */
 export function triggerLabel(trigger: string, env?: Record<string, string>, createdBy?: string) {
@@ -96,6 +96,21 @@ export function fmtSize(n: number) {
 }
 
 export const shortSha = (sha?: string) => sha?.slice(0, 8)
+
+/** 仓库克隆地址对应的网页地址（git@host:a/b.git → https://host/a/b）；无法识别时为空。 */
+export function repoWebURL(url?: string) {
+  if (!url) return undefined
+  const ssh = url.match(/^(?:ssh:\/\/)?git@([^:/]+)[:/](.+)$/)
+  const web = ssh ? `https://${ssh[1]}/${ssh[2]}` : /^https?:\/\//.test(url) ? url.replace(/\/\/[^@/]+@/, '//') : undefined
+  return web?.replace(/\.git$/, '').replace(/\/$/, '')
+}
+
+/** 提交在代码平台上的地址（GitLab 为 /-/commit/，其余为 /commit/）。 */
+export function commitURL(repo?: string, sha?: string) {
+  const web = repoWebURL(repo)
+  if (!web || !sha) return undefined
+  return `${web}${/gitlab/i.test(web) ? '/-/commit/' : '/commit/'}${sha}`
+}
 
 /** 秒数的中文时长：41秒、2分5秒、1小时3分。 */
 export function fmtSeconds(sec: number) {

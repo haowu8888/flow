@@ -294,13 +294,18 @@ func (r *Runner) runSteps(ctx context.Context, a *protocol.ClaimResponse, dir st
 	defer func() { a.Outputs = sc.outputs }()
 	for i, step := range job.Steps {
 		fmt.Fprintf(out, "==> [%d/%d] %s\n", i+1, len(job.Steps), step.Name)
-		r.reportStep(ctx, job, i, model.StatusRunning, 0)
+		r.reportStep(ctx, job, i, model.StatusRunning, 0, nil)
+		before := maps.Clone(sc.outputs)
 		base := maps.Clone(env)
 		maps.Copy(base, sc.vars(job.Image != ""))
 		senv := stepEnv(base, step.Env, a.Secrets)
 		var code int
 		var err error
 		if native := nativeSteps[step.Kind]; native != nil {
+			if step.Connection != "" {
+				senv = maps.Clone(senv)
+				senv[stepConnectionEnv] = step.Connection
+			}
 			code, err = native(ctx, r, a, sc, senv, out)
 		} else {
 			code, err = runStep(ctx, job, i, dir, senv, sc, out)
@@ -308,12 +313,12 @@ func (r *Runner) runSteps(ctx context.Context, a *protocol.ClaimResponse, dir st
 		if err != nil {
 			// 被取消 / 超时的步骤不在此上报，由 Server 在 Job 结束时按最终状态收尾。
 			if ctx.Err() == nil {
-				r.reportStep(ctx, job, i, model.StatusFailed, code)
+				r.reportStep(ctx, job, i, model.StatusFailed, code, nil)
 			}
 			return code, fmt.Errorf("step %q: %w", step.Name, err)
 		}
 		sc.collect(out)
-		r.reportStep(ctx, job, i, model.StatusSuccess, 0)
+		r.reportStep(ctx, job, i, model.StatusSuccess, 0, changedOutputs(before, sc.outputs))
 	}
 	if job.Cache != nil && !r.cfg.NoCache {
 		r.saveCache(job, dir, env, out)
@@ -327,13 +332,27 @@ func (r *Runner) runSteps(ctx context.Context, a *protocol.ClaimResponse, dir st
 }
 
 // reportStep 上报步骤进度，仅用于展示：失败只记录日志，不影响执行。
-func (r *Runner) reportStep(ctx context.Context, job *model.Job, index int, status model.Status, exitCode int) {
+func (r *Runner) reportStep(ctx context.Context, job *model.Job, index int, status model.Status, exitCode int, outputs map[string]string) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	req := protocol.StepRequest{RunnerID: job.RunnerID, Index: index, Status: status, ExitCode: exitCode}
+	req := protocol.StepRequest{RunnerID: job.RunnerID, Index: index, Status: status, ExitCode: exitCode, Outputs: outputs}
 	if err := r.client.ReportStep(ctx, job.ID, req); err != nil {
 		log.Printf("job %s report step %d: %v", job.ID, index, err)
 	}
+}
+
+// changedOutputs 返回步骤执行后新增或改变的任务输出。
+func changedOutputs(before, after map[string]string) map[string]string {
+	var out map[string]string
+	for k, v := range after {
+		if old, ok := before[k]; !ok || old != v {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func sleep(ctx context.Context, d time.Duration) {

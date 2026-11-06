@@ -4,6 +4,8 @@ import type {
   Artifact,
   AuditEvent,
   Dashboard,
+  Delivery,
+  QueueWait,
   Deployment,
   Environment,
   Host,
@@ -205,6 +207,8 @@ export const api = {
   /** baseVersion：编辑起点的版本，期间被他人保存过时返回 409。 */
   updatePipeline: (id: string, yaml: string, baseVersion?: number) =>
     request<Pipeline>('PUT', `/api/pipelines/${enc(id)}${baseVersion ? `?base_version=${baseVersion}` : ''}`, yaml, 'application/yaml'),
+  listDeliveries: (id: string, offset: number, limit: number) =>
+    request<{ items: Delivery[]; total: number }>('GET', `/api/pipelines/${enc(id)}/deliveries?offset=${offset}&limit=${limit}`),
   pipelineStats: (id: string, days: number) => request<PipelineStats>('GET', `/api/pipelines/${enc(id)}/stats?days=${days}`),
   listRevisions: (id: string) => request<PipelineRevision[]>('GET', `/api/pipelines/${enc(id)}/revisions`),
   getRevision: (id: string, version: number) => request<PipelineRevision>('GET', `/api/pipelines/${enc(id)}/revisions/${version}`),
@@ -233,7 +237,8 @@ export const api = {
   triggerRun: (pipelineId: string, env?: Record<string, string>, remark?: string) =>
     request<RunDetail>('POST', `/api/pipelines/${enc(pipelineId)}/runs`, JSON.stringify({ env, remark }), 'application/json'),
   getRun: (id: string) => request<RunDetail>('GET', `/api/runs/${enc(id)}`),
-  cancelRun: (id: string) => request<RunDetail>('POST', `/api/runs/${enc(id)}/cancel`),
+  cancelRun: (id: string, force = false) => request<RunDetail>('POST', `/api/runs/${enc(id)}/cancel${force ? '?force=true' : ''}`),
+  runQueue: (id: string) => request<QueueWait | null>('GET', `/api/runs/${enc(id)}/queue`),
   retryRun: (id: string) => request<RunDetail>('POST', `/api/runs/${enc(id)}/retry`),
   /** 以该次成功运行的配置版本、参数与代码提交重新运行。 */
   rollbackRun: (id: string) => request<RunDetail>('POST', `/api/runs/${enc(id)}/rollback`),

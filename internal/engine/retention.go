@@ -70,7 +70,7 @@ func (e *Engine) ApplyRetention(ctx context.Context) (artifacts, runs int, err e
 }
 
 func (e *Engine) deleteBlob(ctx context.Context, key string) {
-	if err := e.blobs.Delete(ctx, key); err != nil {
+	if err := e.removeBlob(ctx, key); err != nil {
 		e.logf("delete artifact blob %s: %v", key, err)
 	}
 }

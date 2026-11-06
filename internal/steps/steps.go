@@ -31,16 +31,18 @@ type Option struct {
 
 // Kind 是一种内置步骤。
 type Kind struct {
-	Kind        string   `json:"kind"`
-	Category    string   `json:"category"`
-	Label       string   `json:"label"`
-	Description string   `json:"description"`
-	Connection  string   `json:"connection,omitempty"` // 需要的服务连接类型
-	Image       string   `json:"image,omitempty"`      // 建议的构建镜像（展示用）
-	Inputs      []Input  `json:"inputs"`
-	Outputs     []string `json:"outputs,omitempty"` // 写入的任务输出
-	Native      bool     `json:"native,omitempty"`
-	script      string
+	Kind        string `json:"kind"`
+	Category    string `json:"category"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Connection  string `json:"connection,omitempty"` // 需要的服务连接类型
+	// ConnectionOptional 为 true 时服务连接选填（如构建物上传：不选存在 Server）。
+	ConnectionOptional bool     `json:"connection_optional,omitempty"`
+	Image              string   `json:"image,omitempty"` // 建议的构建镜像（展示用）
+	Inputs             []Input  `json:"inputs"`
+	Outputs            []string `json:"outputs,omitempty"` // 写入的任务输出
+	Native             bool     `json:"native,omitempty"`
+	script             string
 }
 
 // Categories 是步骤分类（展示顺序）。

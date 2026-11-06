@@ -5,7 +5,7 @@ import { statusLabel } from './StatusBadge'
 const icon: Partial<Record<Status, string>> = { success: '✓', failed: '✗', running: '●', canceled: '⊘', waiting: '✋', skipped: '–' }
 
 /** 运行的阶段看板：每个阶段一列（耗时、完成进度），任务卡片列出步骤状态；点任务或步骤打开日志。 */
-export function StageBoard({ jobs, source, onOpen }: { jobs: Job[]; source?: { repo: string; branch?: string; commit?: string }; onOpen: (jobId: string, step?: number) => void }) {
+export function StageBoard({ jobs, source, onOpen }: { jobs: Job[]; source?: { repo: string; branch?: string; commit?: string; commitUrl?: string }; onOpen: (jobId: string, step?: number) => void }) {
   const stages: { name: string; jobs: Job[] }[] = []
   for (const j of [...jobs].sort((a, b) => a.stage_index - b.stage_index || a.seq - b.seq)) {
     const last = stages[stages.length - 1]
@@ -21,7 +21,14 @@ export function StageBoard({ jobs, source, onOpen }: { jobs: Job[]; source?: { r
             <div className="board-card source-card" title={source.repo}>
               <div className="strong ellipsis">{source.repo}</div>
               {source.branch && <div className="muted small">{source.branch}</div>}
-              {source.commit && <div className="mono small link-text">{source.commit.slice(0, 8)}</div>}
+              {source.commit &&
+                (source.commitUrl ? (
+                  <a className="mono small" href={source.commitUrl} target="_blank" rel="noreferrer" title={`在仓库中查看提交 ${source.commit}`}>
+                    {source.commit.slice(0, 8)}
+                  </a>
+                ) : (
+                  <div className="mono small link-text">{source.commit.slice(0, 8)}</div>
+                ))}
             </div>
           </div>
         </div>
@@ -60,12 +67,22 @@ export function StageBoard({ jobs, source, onOpen }: { jobs: Job[]; source?: { r
                     <ol className="board-steps">
                       {j.steps.map((s, i) => {
                         const ss = j.step_states?.[i]?.status ?? (isTerminal(j.status) && j.status !== 'success' ? 'skipped' : 'pending')
+                        const links = outputLinks(j.step_states?.[i]?.outputs)
                         return (
                           <li key={i}>
                             <button className={`status-${ss}`} disabled={!j.step_states?.[i]?.started_at} onClick={() => onOpen(j.id, i)}>
                               <span className={`step-icon${ss === 'running' ? ' live' : ''}`}>{icon[ss] ?? '○'}</span>
                               <span className="ellipsis">{s.name || `步骤 ${i + 1}`}</span>
                             </button>
+                            {links.length > 0 && (
+                              <div className="step-links">
+                                {links.map(([label, url]) => (
+                                  <a key={url} href={url} target="_blank" rel="noreferrer" className="small">
+                                    {label}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
                           </li>
                         )
                       })}
@@ -85,6 +102,15 @@ export function StageBoard({ jobs, source, onOpen }: { jobs: Job[]; source?: { r
       })}
     </div>
   )
+}
+
+const linkLabels: Record<string, string> = { CLOUDREVE_URL: '打开网盘目录', CLOUDREVE_SHARE_URL: '网盘分享链接', OSS_URL: 'OSS 地址' }
+
+/** 步骤输出中的链接（网盘目录 / 分享链接 / OSS 地址 / 构建物下载地址）。 */
+function outputLinks(outputs?: Record<string, string>): [string, string][] {
+  return Object.entries(outputs ?? {})
+    .filter(([k, v]) => /^https?:\/\//.test(v) && (linkLabels[k] || /^ARTIFACT_.+_URL$/.test(k)))
+    .map(([k, v]) => [linkLabels[k] ?? '下载构建物', v])
 }
 
 function stageStatus(jobs: Job[]): Status {

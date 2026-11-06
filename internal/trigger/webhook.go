@@ -84,6 +84,7 @@ const (
 
 // Event 是归一化后的 Webhook 事件。
 type Event struct {
+	Provider   string       // github / gitlab / gitee / gitea / gogs，按事件请求头判断，未识别时为空
 	Name       string       // 平台原始事件名，未提供时为空
 	Kind       string       // push / pull_request / ping / 其他（原样小写）
 	DeliveryID string       // 平台的投递 ID，重试时不变，用于去重；平台未提供时为空
@@ -130,6 +131,20 @@ type Push struct {
 	// Files 是本次推送改动的文件（各提交的新增、修改、删除），FilesKnown 为 false 表示载荷中没有完整列表。
 	Files      []string
 	FilesKnown bool
+	// 以下仅用于展示触发详情。
+	Before       string
+	CompareURL   string
+	RepoWeb      string // 仓库网页地址
+	Commits      []Commit
+	TotalCommits int
+}
+
+// Commit 是推送载荷中的一个提交。
+type Commit struct {
+	ID      string
+	Message string // 首行
+	Author  string
+	URL     string
 }
 
 func (p *Push) Branch() string {
@@ -175,6 +190,12 @@ func EventKind(h http.Header) (name, kind string) {
 func ParseEvent(h http.Header, body []byte) (*Event, error) {
 	ev := &Event{}
 	ev.Name, ev.Kind = EventKind(h)
+	for _, k := range eventHeaders {
+		if h.Get(k) != "" {
+			ev.Provider = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(k, "X-"), "-Event"))
+			break
+		}
+	}
 	for _, k := range deliveryHeaders {
 		if v := strings.TrimSpace(h.Get(k)); v != "" {
 			ev.DeliveryID = v
@@ -204,17 +225,23 @@ func ParseEvent(h http.Header, body []byte) (*Event, error) {
 func parsePush(body []byte) (*Push, error) {
 	var p struct {
 		Ref         string `json:"ref"`
+		Before      string `json:"before"`
 		After       string `json:"after"`
+		Compare     string `json:"compare"`      // GitHub
+		CompareURL  string `json:"compare_url"`  // Gitea / Gogs
 		CheckoutSHA string `json:"checkout_sha"` // GitLab 标签推送时 after 不是提交
 		Deleted     bool   `json:"deleted"`
 		Repository  struct {
 			FullName   string `json:"full_name"`
 			CloneURL   string `json:"clone_url"`
 			GitHTTPURL string `json:"git_http_url"`
+			HTMLURL    string `json:"html_url"`
+			Homepage   string `json:"homepage"`
 		} `json:"repository"`
 		Project struct {
 			PathWithNamespace string `json:"path_with_namespace"`
 			GitHTTPURL        string `json:"git_http_url"`
+			WebURL            string `json:"web_url"`
 		} `json:"project"`
 		Pusher struct {
 			Name     string `json:"name"`
@@ -226,8 +253,13 @@ func parsePush(body []byte) (*Push, error) {
 			Message string `json:"message"`
 		} `json:"head_commit"`
 		Commits []struct {
-			ID       string   `json:"id"`
-			Message  string   `json:"message"`
+			ID      string `json:"id"`
+			Message string `json:"message"`
+			URL     string `json:"url"`
+			Author  struct {
+				Name     string `json:"name"`
+				Username string `json:"username"`
+			} `json:"author"`
 			Added    []string `json:"added"`
 			Modified []string `json:"modified"`
 			Removed  []string `json:"removed"`
@@ -248,6 +280,12 @@ func parsePush(body []byte) (*Push, error) {
 		Pusher: first(p.Pusher.Username, p.Pusher.Login, p.Pusher.Name, p.UserUsername),
 	}
 	push.Deleted = p.Deleted || strings.Trim(push.Commit, "0") == ""
+	push.Before, push.CompareURL = p.Before, first(p.Compare, p.CompareURL)
+	push.RepoWeb = first(p.Repository.HTMLURL, p.Project.WebURL, p.Repository.Homepage)
+	push.TotalCommits = max(p.TotalCommits, len(p.Commits))
+	for _, c := range p.Commits {
+		push.Commits = append(push.Commits, Commit{ID: c.ID, Message: firstLine(c.Message), Author: first(c.Author.Username, c.Author.Name), URL: c.URL})
+	}
 	if p.HeadCommit != nil {
 		push.Message = p.HeadCommit.Message
 	} else if n := len(p.Commits); n > 0 {

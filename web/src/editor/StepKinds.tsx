@@ -93,7 +93,7 @@ export function KindForm({ r, k, step }: { r: JobRef; k: number; step: StepSpec 
       <div className="muted small">{def.description}</div>
       {def.connection && (
         <label className="field">
-          <span>服务连接 *</span>
+          <span>{def.connection_optional ? '服务连接（选填）' : '服务连接 *'}</span>
           <ConnectionSelect type={def.connection} value={step.connection} disabled={readOnly} onChange={(v) => apply(ops.set([...p, 'connection'], v || undefined))} />
         </label>
       )}

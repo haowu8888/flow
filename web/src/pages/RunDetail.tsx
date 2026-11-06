@@ -7,8 +7,9 @@ import { StageBoard } from '../components/StageBoard'
 import { LogViewer, type LogViewerHandle } from '../components/LogViewer'
 import { Modal } from '../components/Modal'
 import { TestReports } from '../components/TestReports'
+import { TriggerDetails } from '../components/TriggerDetails'
 import { StatusBadge, statusLabel } from '../components/StatusBadge'
-import { fmtDuration, fmtExpiry, fmtSize, fmtTime, shortSha, triggerLabel } from '../format'
+import { commitURL, fmtDuration, fmtExpiry, fmtSize, fmtTime, shortSha, triggerLabel } from '../format'
 import { usePolling, useRunStream, useTicker } from '../hooks'
 import { href, navigate } from '../router'
 import { hasPerm, isTerminal, type Job, type Pipeline, type Run, type Status } from '../types'
@@ -22,6 +23,32 @@ function pickDefault(jobs: Job[], current?: string) {
     jobs.find((j) => j.id === current) ??
     jobs[0]
   )?.id
+}
+
+/** 排队原因：并发组名额已满，或任务在等构建节点领取。 */
+function QueueNotice({ run, jobs }: { run: Run; jobs: Job[] }) {
+  const waiting = run.status === 'queued' || jobs.some((j) => j.status === 'queued')
+  const key = jobs.map((j) => j.status).join() + run.status
+  const { data: qw } = usePolling(() => (waiting ? api.runQueue(run.id) : Promise.resolve(null)), [run.id, waiting, key], () => (waiting ? 5000 : null))
+  if (!waiting || !qw) return null
+  if (qw.group) {
+    const scope = qw.group.startsWith('pipeline/') ? '本流水线' : `并发组 ${qw.group}`
+    return (
+      <div className="card waiting-notice" title="上限可在编辑页「触发设置 / 并发」调整">
+        排队中：{scope}并发已满 {qw.running}/{qw.limit}
+        {qw.ahead ? `，前面还有 ${qw.ahead} 个排队` : ''}，等正在执行的运行结束后自动开始。
+      </div>
+    )
+  }
+  return (
+    <>
+      {qw.jobs?.map((j) => (
+        <div key={j.job} className="card waiting-notice">
+          「{j.job}」{j.reason}
+        </div>
+      ))}
+    </>
+  )
 }
 
 /** embedded：嵌在流水线详情「最近运行」中，不显示面包屑与流水线名。 */
@@ -91,7 +118,7 @@ export function RunDetail({ id, embedded }: { id: string; embedded?: boolean }) 
   const source = useMemo(() => {
     try {
       const src = (parseYaml(pipeline?.yaml ?? '') as { source?: { url?: string; branch?: string } } | null)?.source
-      return src?.url ? { repo: src.url.replace(/^[a-z]+:\/\/[^/]+\//i, '').replace(/\.git$/, ''), branch: src.branch } : undefined
+      return src?.url ? { repo: src.url.replace(/^[a-z]+:\/\/[^/]+\//i, '').replace(/\.git$/, ''), url: src.url, branch: src.branch } : undefined
     } catch {
       return undefined
     }
@@ -101,6 +128,8 @@ export function RunDetail({ id, embedded }: { id: string; embedded?: boolean }) 
   if (!data) return <p className="muted">加载中…</p>
 
   const { run, jobs } = data
+  // 已请求取消、但还有任务在等构建节点确认停止
+  const cancelPending = jobs.some((j) => j.status === 'running' && j.cancel_requested)
   const job = jobs.find((j) => j.id === selected)
   // webhook 注入的 FLOW_GIT_* 单独展示为提交信息，其余为用户参数。
   const git = run.trigger === 'webhook' ? run.env : undefined
@@ -149,9 +178,26 @@ export function RunDetail({ id, embedded }: { id: string; embedded?: boolean }) 
           </span>
         </div>
         <div className="spacer" />
-        {active && hasPerm(pipeline, 'run') && (
-          <button className="btn danger" disabled={busy} onClick={() => act(() => api.cancelRun(id))}>
+        {active && hasPerm(pipeline, 'run') && !cancelPending && (
+          <button
+            className="btn danger"
+            disabled={busy}
+            title={run.status === 'queued' ? '还在排队，取消后不会被领取' : '正在执行的任务会被构建节点终止，确认停下后才标记为已取消；未开始的任务直接取消'}
+            onClick={() => confirm(`取消运行 #${run.number}？`) && act(() => api.cancelRun(id))}
+          >
             取消运行
+          </button>
+        )}
+        {active && hasPerm(pipeline, 'run') && cancelPending && (
+          <button
+            className="btn danger"
+            disabled={busy}
+            title="不再等构建节点确认停止，直接把运行标记为已取消"
+            onClick={() =>
+              confirm(`强制结束 #${run.number}？\n不再等构建节点确认停止，直接把运行标记为已取消（节点离线或卡住时使用）。`) && act(() => api.cancelRun(id, true))
+            }
+          >
+            强制结束
           </button>
         )}
         {(run.status === 'failed' || run.status === 'canceled') && hasPerm(pipeline, 'run') && (
@@ -162,6 +208,22 @@ export function RunDetail({ id, embedded }: { id: string; embedded?: boolean }) 
             onClick={() => act(() => api.retryRun(id))}
           >
             重试失败的 Job
+          </button>
+        )}
+        {!active && hasPerm(pipeline, 'run') && (
+          <button
+            className="btn"
+            disabled={busy}
+            title={params.length ? '沿用这次运行填写的运行参数，按流水线当前配置运行，代码拉取当前最新提交' : '这次运行没有运行参数，按流水线当前配置运行，代码拉取当前最新提交'}
+            onClick={() => {
+              if (!confirm(params.length ? `用 #${run.number} 的参数重新构建？\n${params.map(([k, v]) => `${k}=${v}`).join('\n')}` : `重新构建？按流水线当前配置运行，代码拉取最新提交。`)) return
+              act(async () => {
+                const res = await api.triggerRun(run.pipeline_id, params.length ? Object.fromEntries(params) : undefined, `重新构建 #${run.number}`)
+                navigate(href.run(res.run.id))
+              })
+            }}
+          >
+            重新构建
           </button>
         )}
         {run.status === 'success' && !!run.pipeline_version && hasPerm(pipeline, 'run') && (
@@ -176,7 +238,13 @@ export function RunDetail({ id, embedded }: { id: string; embedded?: boolean }) 
       <dl className="facts inline">
         <div>
           <dt>触发信息</dt>
-          <dd>{triggerLabel(run.trigger, run.env, run.created_by)}</dd>
+          <dd>
+            {run.trigger_info ? (
+              <TriggerDetails info={run.trigger_info} label={triggerLabel(run.trigger, run.env, run.created_by)} />
+            ) : (
+              triggerLabel(run.trigger, run.env, run.created_by)
+            )}
+          </dd>
         </div>
         <div>
           <dt>开始时间</dt>
@@ -236,7 +304,13 @@ export function RunDetail({ id, embedded }: { id: string; embedded?: boolean }) 
           <div>
             <dt>代码提交</dt>
             <dd>
-              <span className="mono" title={run.commit}>{shortSha(run.commit)}</span>
+              {commitURL(source?.url, run.commit) ? (
+                <a className="mono" href={commitURL(source?.url, run.commit)} target="_blank" rel="noreferrer" title={run.commit}>
+                  {shortSha(run.commit)}
+                </a>
+              ) : (
+                <span className="mono" title={run.commit}>{shortSha(run.commit)}</span>
+              )}
               {run.env?.FLOW_GIT_BRANCH && <span className="muted"> · {run.env.FLOW_GIT_BRANCH}</span>}
             </dd>
           </div>
@@ -268,14 +342,9 @@ export function RunDetail({ id, embedded }: { id: string; embedded?: boolean }) 
         )}
       </dl>
 
-      {run.status === 'queued' && (
-        <div className="card waiting-notice">
-          排队中：并发组 <code>{run.concurrency_group?.startsWith('pipeline/') ? '本流水线' : run.concurrency_group}</code>{' '}
-          中还有运行没有结束，结束后自动开始。
-        </div>
-      )}
+      <QueueNotice run={run} jobs={jobs} />
 
-      <StageBoard jobs={jobs} source={source && { ...source, commit: run.commit }} onOpen={openLog} />
+      <StageBoard jobs={jobs} source={source && { ...source, commit: run.commit, commitUrl: commitURL(source.url, run.commit) }} onOpen={openLog} />
 
       {jobs
         .filter((j) => j.status === 'waiting')

@@ -97,6 +97,9 @@ stages:
 		t.Fatalf("webhook = %d %s", code, body)
 	}
 	done = waitRun(t, ts, res.RunID)
+	if ti := done.Run.TriggerInfo; ti == nil || ti.Provider != "generic" || strings.Join(ti.Vars, ",") != "TARGET" {
+		t.Errorf("trigger info = %+v", ti)
+	}
 	if log := getText(t, ts, "/api/jobs/"+done.Jobs[0].ID+"/logs"); !strings.Contains(log, "target=prod fixed=keep") {
 		t.Errorf("webhook run log:\n%s", log)
 	}

@@ -267,7 +267,7 @@ func (e *Engine) DeletePipeline(ctx context.Context, id string) error {
 		return err
 	}
 	for _, k := range keys {
-		if err := e.blobs.Delete(ctx, k); err != nil {
+		if err := e.removeBlob(ctx, k); err != nil {
 			e.logf("delete artifact blob %s: %v", k, err)
 		}
 	}
@@ -1087,7 +1087,7 @@ func (e *Engine) ReportHosts(ctx context.Context, jobID, runnerID string, hosts 
 }
 
 // ReportStep 记录步骤进度：status 为 running 表示开始，success / failed 表示结束。
-func (e *Engine) ReportStep(ctx context.Context, jobID, runnerID string, index int, status model.Status, exitCode int) error {
+func (e *Engine) ReportStep(ctx context.Context, jobID, runnerID string, index int, status model.Status, exitCode int, outputs map[string]string) error {
 	switch status {
 	case model.StatusRunning, model.StatusSuccess, model.StatusFailed:
 	default:
@@ -1111,6 +1111,9 @@ func (e *Engine) ReportStep(ctx context.Context, jobID, runnerID string, index i
 			*st = model.StepState{Status: status, StartedAt: &now}
 		} else {
 			st.Status, st.ExitCode, st.FinishedAt = status, exitCode, &now
+			if len(outputs) > 0 {
+				st.Outputs = outputs
+			}
 			if st.StartedAt == nil {
 				st.StartedAt = &now
 			}

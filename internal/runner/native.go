@@ -123,7 +123,8 @@ func uploadNamedArtifact(ctx context.Context, r *Runner, a *protocol.ClaimRespon
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return -1, err
 	}
-	q := url.Values{"runner_id": {a.Job.RunnerID}, "name": {name}, "version": {strings.TrimSpace(env["INPUT_VERSION"])}, "format": {"zip"}}
+	q := url.Values{"runner_id": {a.Job.RunnerID}, "name": {name}, "version": {strings.TrimSpace(env["INPUT_VERSION"])}, "format": {"zip"},
+		"connection": {env[stepConnectionEnv]}, "bucket": {strings.TrimSpace(env["INPUT_BUCKET"])}, "expire_days": {strings.TrimSpace(env["INPUT_EXPIRE_DAYS"])}}
 	var art model.Artifact
 	path := jobPath(a.Job.ID, "artifacts") + "?" + q.Encode()
 	if _, err := r.client.doWith(ctx, r.client.upload, "POST", path, tmp, "application/zip", &art); err != nil {
@@ -134,8 +135,14 @@ func uploadNamedArtifact(ctx context.Context, r *Runner, a *protocol.ClaimRespon
 	sc.outputs[key], sc.env[key] = name+"@"+art.Version, name+"@"+art.Version
 	sc.outputs[key+"_VERSION"], sc.env[key+"_VERSION"] = art.Version, art.Version
 	sc.outputs[key+"_ID"], sc.env[key+"_ID"] = art.ID, art.ID
+	if art.URL != "" {
+		sc.outputs[key+"_URL"], sc.env[key+"_URL"] = art.URL, art.URL
+	}
 	return 0, nil
 }
+
+// stepConnectionEnv 向内置步骤传递所选服务连接的名称。
+const stepConnectionEnv = "FLOW_STEP_CONNECTION"
 
 // downloadNamedArtifact 下载上游任务上传的命名构建物并解压。输入：INPUT_ARTIFACT 名称，INPUT_TARGET_DIR 解压目录。
 func downloadNamedArtifact(ctx context.Context, r *Runner, a *protocol.ClaimResponse, sc *stepContext, env map[string]string, out io.Writer) (int, error) {

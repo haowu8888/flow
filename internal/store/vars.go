@@ -102,6 +102,10 @@ func (s pgq) SetRunRemark(ctx context.Context, id, remark string) error {
 	return expectRow(s.q.Exec(ctx, `UPDATE runs SET remark = $2 WHERE id = $1`, id, remark))
 }
 
+func (s pgq) SetRunTriggerInfo(ctx context.Context, id string, info *model.TriggerInfo) error {
+	return expectRow(s.q.Exec(ctx, `UPDATE runs SET trigger_info = $2 WHERE id = $1`, id, info))
+}
+
 // ---- 内存实现 ----
 
 type varData struct {
@@ -269,5 +273,16 @@ func (m *Memory) SetRunRemark(_ context.Context, id, remark string) error {
 		return ErrNotFound
 	}
 	r.Remark = remark
+	return nil
+}
+
+func (m *Memory) SetRunTriggerInfo(_ context.Context, id string, info *model.TriggerInfo) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := m.runs[id]
+	if r == nil {
+		return ErrNotFound
+	}
+	r.TriggerInfo = info
 	return nil
 }

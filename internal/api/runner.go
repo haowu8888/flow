@@ -125,7 +125,7 @@ func (s *server) reportStep(w http.ResponseWriter, r *http.Request, ri engine.Ru
 	if !ok {
 		return
 	}
-	respond(w, http.StatusNoContent, nil, s.eng.ReportStep(r.Context(), r.PathValue("id"), id, req.Index, req.Status, req.ExitCode))
+	respond(w, http.StatusNoContent, nil, s.eng.ReportStep(r.Context(), r.PathValue("id"), id, req.Index, req.Status, req.ExitCode, req.Outputs))
 }
 
 // uploadTestReport 保存 Job 的测试报告。
@@ -173,8 +173,12 @@ func (s *server) uploadArtifact(w http.ResponseWriter, r *http.Request, ri engin
 		return
 	}
 	q := r.URL.Query()
-	meta := engine.ArtifactMeta{Name: q.Get("name"), Version: q.Get("version"), Format: q.Get("format")}
+	meta := engine.ArtifactMeta{Name: q.Get("name"), Version: q.Get("version"), Format: q.Get("format"),
+		Connection: q.Get("connection"), Bucket: q.Get("bucket"), ExpireDays: q.Get("expire_days")}
 	a, err := s.eng.UploadNamedArtifact(r.Context(), r.PathValue("id"), id, meta, http.MaxBytesReader(w, r.Body, maxArtifactBytes))
+	if err == nil {
+		a.URL = s.serverURL(r) + s.eng.ArtifactLinkPath(a)
+	}
 	respond(w, http.StatusCreated, a, err)
 }
 

@@ -3730,3 +3730,79 @@ td.nowrap {
 .btn.link.danger-text {
   color: var(--c-failed);
 }
+
+/* ---- 部署历史 ---- */
+.deliveries td {
+  vertical-align: middle;
+}
+.deliveries tr.sub-row td {
+  border-top-color: var(--bg);
+}
+.delivery-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.delivery-file .tag {
+  margin-left: 2px;
+}
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.step-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 2px 22px;
+}
+
+/* ---- 触发详情 ---- */
+.trigger-details {
+  position: relative;
+  display: inline-block;
+}
+.trigger-details > .btn.link {
+  padding: 0;
+  color: inherit;
+}
+.trigger-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(420px, 86vw);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.trigger-pop .row-between {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.trigger-commits {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.trigger-commits li {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.trigger-commits .ellipsis {
+  flex: 1;
+  min-width: 0;
+}
