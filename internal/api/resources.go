@@ -124,7 +124,7 @@ func (s *server) fillArtifactURLs(r *http.Request, list []*model.Artifact) {
 
 // openArtifact 是构建物的免登录下载（ARTIFACT_<名称>_URL）：以链接中的签名鉴权。
 func (s *server) openArtifact(w http.ResponseWriter, r *http.Request) {
-	a, err := s.eng.ArtifactByLink(r.Context(), r.PathValue("id"), r.URL.Query().Get("sig"))
+	a, err := s.eng.ArtifactByLink(r.Context(), r.PathValue("id"), r.URL.Query().Get("exp"), r.URL.Query().Get("sig"))
 	if err != nil {
 		respond(w, 0, nil, err)
 		return

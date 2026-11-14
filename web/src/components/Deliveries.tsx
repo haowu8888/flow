@@ -59,7 +59,7 @@ export function Deliveries({ pipeline, repo }: { pipeline: Pipeline; repo?: { ur
             {a.storage && <span className="muted small">存于 {a.storage}</span>}
           </a>
         ),
-        action: a.url && <CopyButton text={a.url} label="复制下载链接" title="免登录下载地址（带签名），构建物清理后失效" />,
+        action: a.url && <CopyButton text={a.url} label="复制下载链接" title="免登录下载地址（带签名，7 天有效），构建物清理后失效" />,
       })
     }
     d.drives.forEach((x, i) =>

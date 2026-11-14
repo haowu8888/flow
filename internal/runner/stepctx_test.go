@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,5 +26,24 @@ func TestFlowPathKeepsImagePath(t *testing.T) {
 	want := filepath.Join(dir, "bin") + ":" + filepath.Join(tools, "bun") + ":" + os.Getenv("PATH")
 	if got := sc.vars(false)["PATH"]; got != want {
 		t.Errorf("host: PATH = %q, want %q", got, want)
+	}
+}
+
+// 结束 Job 容器时先删容器，Runner 不是 root 再用临时容器把工作目录和上下文目录的属主改回 Runner 用户。
+func TestJobContainerStopChownsWorkspace(t *testing.T) {
+	if os.Getuid() <= 0 {
+		t.Skip("runner is root: no chown needed")
+	}
+	bin := t.TempDir()
+	logf := filepath.Join(bin, "calls")
+	os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\necho \"$*\" >> "+logf+"\n"), 0o755)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+
+	c := &jobContainer{name: "flow-j1", image: "golang:1.23", dir: "/w/job-1", ctx: "/w/job-1.flow", out: os.Stderr}
+	c.stop()
+	b, _ := os.ReadFile(logf)
+	want := "rm -f flow-j1\n" + fmt.Sprintf("run --rm -u 0 --entrypoint chown -v /w/job-1:/workspace -v /w/job-1.flow:/flow-ctx golang:1.23 -Rh %d:%d /workspace /flow-ctx\n", os.Getuid(), os.Getgid())
+	if string(b) != want {
+		t.Errorf("docker calls =\n%s\nwant\n%s", b, want)
 	}
 }

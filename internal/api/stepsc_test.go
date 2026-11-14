@@ -158,7 +158,9 @@ stages:
 		t.Errorf("step states = %+v", st)
 	}
 	dl := jobs["build"].Outputs["ARTIFACT_APP_URL"]
-	if !strings.HasPrefix(dl, ts.URL+"/api/open/artifacts/"+arts[0].ID+"/download?sig=") || len(arts) == 0 || arts[0].URL != dl {
+	// 列表每次打开都重新签发（过期时间不同），只比较路径
+	prefix := ts.URL + "/api/open/artifacts/" + arts[0].ID + "/download?exp="
+	if !strings.HasPrefix(dl, prefix) || !strings.Contains(dl, "&sig=") || !strings.HasPrefix(arts[0].URL, prefix) {
 		t.Errorf("artifact url = %q, listed %q", dl, arts[0].URL)
 	}
 	if resp, err := http.Get(dl); err != nil || resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/zip" {

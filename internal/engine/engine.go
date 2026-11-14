@@ -767,6 +767,7 @@ func (e *Engine) Claim(ctx context.Context, r RunnerInfo) (*Assignment, error) {
 	// 无依赖的任务也查询：重新部署的任务依赖已清空，产物来自原运行。
 	arts, err := e.upstreamArtifacts(ctx, claimed)
 	if err != nil {
+		e.releaseClaim(ctx, claimed.ID, r.ID)
 		return nil, err
 	}
 	for _, art := range arts {
@@ -808,6 +809,25 @@ func (e *Engine) Claim(ctx context.Context, r RunnerInfo) (*Assignment, error) {
 		claimed.Env = mergeEnv(claimed.Env, outs)
 	}
 	return a, nil
+}
+
+// releaseClaim 把已领取但没能下发给 Runner 的 Job 放回队列：否则它一直显示执行中，要等租约过期才被回收，还白占一次重试。
+func (e *Engine) releaseClaim(ctx context.Context, jobID, runnerID string) {
+	var runID string
+	err := e.store.Atomic(ctx, func(tx store.Tx) error {
+		j, err := e.lockLeasedJob(ctx, tx, jobID, runnerID)
+		if err != nil {
+			return err
+		}
+		j.Status, j.RunnerID, j.StartedAt, j.LeaseUntil = model.StatusQueued, "", nil, time.Time{}
+		runID = j.RunID
+		return tx.UpdateJob(ctx, j)
+	})
+	if err != nil {
+		e.logf("job %s: release claim: %v", jobID, err)
+		return
+	}
+	e.runChanged(runID)
 }
 
 // upstreamArtifacts 返回 Job 全部上游（含间接上游，例如隔着人工卡点）的产物，按 Job 定义顺序排列，后者覆盖前者的同名文件。

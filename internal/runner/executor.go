@@ -81,6 +81,9 @@ func runStep(ctx context.Context, job *model.Job, idx int, dir string, env map[s
 type jobContainer struct {
 	name string
 	path string // 镜像自己的 PATH：$FLOW_PATH 的目录加在它前面
+	// 以下用于结束时交还文件属主
+	image, dir, ctx string
+	out             io.Writer
 }
 
 // startContainer 启动 Job 的容器，常驻到 Job 结束（stop）。
@@ -98,7 +101,7 @@ func startContainer(ctx context.Context, job *model.Job, dir string, sc *stepCon
 		_ = exec.Command("docker", "rm", "-f", name).Run()
 		return nil, fmt.Errorf("start container %s: %w", job.Image, err)
 	}
-	c := &jobContainer{name: name, path: defaultUnixPaths}
+	c := &jobContainer{name: name, path: defaultUnixPaths, image: job.Image, dir: dir, ctx: sc.ctx, out: out}
 	inspect := exec.CommandContext(ctx, "docker", "container", "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", name)
 	inspect.Env = baseEnv()
 	if b, err := inspect.Output(); err == nil {
@@ -111,10 +114,26 @@ func startContainer(ctx context.Context, job *model.Job, dir string, sc *stepCon
 	return c, nil
 }
 
+// stop 删除容器。容器里的进程多以 root 写文件，Runner 不是 root 时再把工作目录和上下文目录交还给 Runner 用户，
+// 否则保存缓存、上传产物会读不到文件，Job 结束后工作目录也删不掉、越积越多。
 func (c *jobContainer) stop() {
 	cmd := exec.Command("docker", "rm", "-f", c.name)
 	cmd.Env = baseEnv()
 	_ = cmd.Run()
+	uid := os.Getuid()
+	if uid <= 0 { // root，或 Windows（-1）
+		return
+	}
+	// 另起一个临时容器来改：Job 被取消时它的容器已经删掉了（runStep 的 Cancel）
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	chown := exec.CommandContext(ctx, "docker", "run", "--rm", "-u", "0", "--entrypoint", "chown",
+		"-v", c.dir+":"+containerWS, "-v", c.ctx+":"+containerCtx, c.image,
+		"-Rh", fmt.Sprintf("%d:%d", uid, os.Getgid()), containerWS, containerCtx)
+	chown.Env = baseEnv()
+	if b, err := chown.CombinedOutput(); err != nil {
+		fmt.Fprintf(c.out, "==> warning: chown workspace to runner user: %v %s\n", err, strings.TrimSpace(string(b)))
+	}
 }
 
 // baseEnv 返回透传给 Step 与 git 的 Runner 进程变量。

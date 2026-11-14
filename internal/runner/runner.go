@@ -337,6 +337,10 @@ func (r *Runner) runSteps(ctx context.Context, a *protocol.ClaimResponse, dir st
 		sc.collect(out)
 		r.reportStep(ctx, job, i, model.StatusSuccess, 0, changedOutputs(before, sc.outputs))
 	}
+	if sc.container != nil {
+		sc.container.stop() // 先交还工作目录的文件属主，下面保存缓存、上传产物才读得到
+		sc.container = nil
+	}
 	if job.Cache != nil && !r.cfg.NoCache {
 		r.saveCache(job, dir, env, out)
 	}
