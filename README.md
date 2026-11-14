@@ -160,7 +160,7 @@ docker compose up -d
 | `FLOW_MODE=agent` / `-agent` | runner | 作为主机 Agent 运行（只执行部署到本机的任务） |
 | `FLOW_RUNNER_ONCE=1` / `-once -wait 5m` | runner | 领取并执行一个任务后退出，等待超时未领到也退出（GitHub 节点） |
 
-Runner 主机需要 `git`（配置了 `source` 时）和 `docker`（Job 指定 `image` 时）。代码拉取、产物与缓存解压都在主机工作目录中进行，容器内挂载为 `/workspace`。
+Runner 主机需要 `git`（配置了 `source` 时）和 `docker`（Job 指定 `image` 时）。代码拉取、产物与缓存解压都在主机工作目录中进行，容器内挂载为 `/workspace`。指定了 `image` 的 Job 在第一个要进容器的步骤前启动一个常驻容器（入口改为 `tail -f /dev/null`），各步骤用 `docker exec` 在其中执行，Job 结束时删除；所以前面步骤装的系统软件包（如「安装系统软件包」）后面的步骤能用到。`$FLOW_PATH` 的目录加在镜像自己的 `PATH` 前面。
 
 ## 流水线 YAML
 

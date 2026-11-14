@@ -1233,7 +1233,7 @@ function RunEnvFields({ r, job }: { r: JobRef; job: JobSpec }) {
         </div>
       </div>
       {containerMode && (
-        <Field label="容器镜像地址" hint="每个步骤在这个镜像的容器中执行，代码目录挂载为 /workspace">
+        <Field label="容器镜像地址" hint="任务的所有步骤在这个镜像的同一个容器中执行，代码目录挂载为 /workspace">
           <Text mono value={job.image} onChange={(v) => set('image', v || undefined)} placeholder="如 node:22、golang:1.23、maven:3-eclipse-temurin-17" />
         </Field>
       )}

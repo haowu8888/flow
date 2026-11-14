@@ -187,8 +187,8 @@ ok "已下载到 $INPUT_TARGET_PATH"
 				{Key: "target", Label: "网盘目录", Required: true, Default: "/builds/${FLOW_PIPELINE}"},
 				{Key: "include_dir", Label: "保留目录本身", Widget: "checkbox", Description: "不勾选只上传目录里的内容；勾选后保留目录（如 dist/index.html）"},
 				{Key: "overwrite", Label: "覆盖已有文件", Widget: "checkbox", Default: "true", Description: "同名文件作为新版本上传；不勾选时遇到同名文件报错"},
-				{Key: "clean", Label: "上传前清空目标目录", Widget: "checkbox", Description: "先把目标目录移到网盘回收站再上传，目录里只剩这次的文件"},
-				{Key: "share", Label: "生成分享链接", Widget: "checkbox", Description: "上传后为目标目录创建公开分享链接，输出 CLOUDREVE_SHARE_URL"},
+				{Key: "clean", Label: "上传前清空目标目录", Widget: "checkbox", Description: "先把目标目录里的内容移到网盘回收站再上传，目录里只剩这次的文件（目录本身和它的分享链接保留）"},
+				{Key: "share", Label: "生成分享链接", Widget: "checkbox", Description: "上传后为目标目录创建公开分享链接（已有就沿用，链接不变），输出 CLOUDREVE_SHARE_URL"},
 			},
 			Outputs: []string{"CLOUDREVE_DIR", "CLOUDREVE_FILES", "CLOUDREVE_SIZE", "CLOUDREVE_URL", "CLOUDREVE_SHARE_URL"},
 			script: cloudreveHelper + `cr upload "$INPUT_SOURCE" "$INPUT_TARGET"
@@ -290,6 +290,11 @@ def lst(p):
         if not d.get("pagination", {}).get("next_token") and len(d.get("files") or []) < 200: return files, d
         page += 1
 def is_dir(f): return f.get("type") in (1, "folder")
+def exists(p):
+    parent, name = os.path.split(p.rstrip("/"))
+    try: files, _ = lst(parent or "/")
+    except SystemExit: return False  # 上级目录也不存在
+    return any(f["name"] == name for f in files)
 def upload_file(local, remote_dir, overwrite=True, pol=None):
     size = os.path.getsize(local)
     name = os.path.basename(local)
@@ -337,8 +342,15 @@ if cmd == "upload":
             else:
                 files.append((src, dst))
     if truthy(os.environ.get("INPUT_CLEAN")):
-        remove([dst])
-        print(f"[INFO] 已清空 {dst}（旧文件在网盘回收站）")
+        if dst == "/":
+            sys.exit("[ERROR] 不能清空网盘根目录")
+        # 只删目录里的内容、保留目录本身：目录挪进回收站的话，它的分享链接也跟着失效
+        if exists(dst):
+            old = [dst + "/" + f["name"] for f in lst(dst)[0]]
+            if old: remove(old)
+            print(f"[INFO] 已清空 {dst}（{len(old)} 项，旧文件在网盘回收站）")
+        else:
+            print(f"[INFO] {dst} 还不存在，不用清空")
     pols, total = {}, 0
     for local, remote in files:
         if remote not in pols:
@@ -356,7 +368,10 @@ if cmd == "upload":
     output("CLOUDREVE_URL", server + "/home?path=" + urllib.parse.quote("cloudreve://my" + dst, safe=""))
     if truthy(os.environ.get("INPUT_SHARE")):
         try:
-            link = call("PUT", "/share", {"uri": uri(dst), "is_private": False, "share_view": True, "permissions": {"anonymous": "BQ==", "everyone": "AQ=="}}, token=tok)
+            # 目录已有公开、未过期、无密码的分享就沿用，每次发布链接不变
+            info = call("GET", "/file/info?uri=" + urllib.parse.quote(uri(dst)) + "&extended=true", token=tok) or {}
+            reuse = [x for x in (info.get("extended_info") or {}).get("shares") or [] if not x.get("expired") and not x.get("password_protected") and x.get("url")]
+            link = reuse[0]["url"] if reuse else call("PUT", "/share", {"uri": uri(dst), "is_private": False, "share_view": True, "permissions": {"anonymous": "BQ==", "everyone": "AQ=="}}, token=tok)
             output("CLOUDREVE_SHARE_URL", link)
             print(f"[INFO] 分享链接：{link}")
         except SystemExit as e:

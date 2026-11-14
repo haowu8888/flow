@@ -21,8 +21,8 @@ var passthroughEnv = []string{
 	"DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
 }
 
-// runStep 执行单个 Step：Job 未指定 image 时在本机 sh 中运行，否则在 docker 容器中运行，
-// 工作目录挂载为 /workspace，同一 Job 的各 Step 共享该目录。env 为 Job 变量与密钥。
+// runStep 执行单个 Step：Job 未指定 image 时在本机 sh 中运行，否则在 Job 的容器（jobContainer）里用 docker exec 运行，
+// 工作目录挂载为 /workspace，同一 Job 的各 Step 共享该目录和容器。env 为 Job 变量与密钥。
 func runStep(ctx context.Context, job *model.Job, idx int, dir string, env map[string]string, sc *stepContext, out io.Writer) (int, error) {
 	step := job.Steps[idx]
 	var cmd *exec.Cmd
@@ -31,11 +31,11 @@ func runStep(ctx context.Context, job *model.Job, idx int, dir string, env map[s
 		cmd.Dir = dir
 		setProcessGroup(cmd)
 	} else {
-		name := fmt.Sprintf("flow-%s-%d", job.ID, idx)
-		args := []string{"run", "--rm", "--name", name, "-v", dir + ":/workspace", "-w", "/workspace"}
-		if sc != nil {
-			args = append(args, sc.mountArgs()...)
+		if sc == nil || sc.container == nil {
+			return -1, fmt.Errorf("job container not started")
 		}
+		name := sc.container.name
+		args := []string{"exec", "-w", containerWS}
 		keys := make([]string, 0, len(env))
 		for k := range env {
 			keys = append(keys, k)
@@ -44,8 +44,9 @@ func runStep(ctx context.Context, job *model.Job, idx int, dir string, env map[s
 		for _, k := range keys {
 			args = append(args, "-e", k) // 值经 docker CLI 的环境变量传入，不出现在进程参数里
 		}
-		args = append(args, job.Image, "sh", "-ec", step.Run)
+		args = append(args, name, "sh", "-ec", step.Run)
 		cmd = exec.CommandContext(ctx, "docker", args...)
+		// 被取消时 Job 也就结束了：删掉容器才能停下容器里的进程（只结束 docker exec 客户端停不了）
 		cmd.Cancel = func() error {
 			_ = exec.Command("docker", "rm", "-f", name).Run()
 			return cmd.Process.Kill()
@@ -73,6 +74,47 @@ func runStep(ctx context.Context, job *model.Job, idx int, dir string, env map[s
 		return exitErr.ExitCode(), fmt.Errorf("exit code %d", exitErr.ExitCode())
 	}
 	return -1, err
+}
+
+// jobContainer 是 Job 指定 image 时所有 Step 共用的容器：前面步骤装的系统软件包、写在工作目录以外的文件
+// 后面的步骤都能用到（同 GitLab / GitHub Actions）。以前每个 Step 各起一个 docker run --rm，装完就没了。
+type jobContainer struct {
+	name string
+	path string // 镜像自己的 PATH：$FLOW_PATH 的目录加在它前面
+}
+
+// startContainer 启动 Job 的容器，常驻到 Job 结束（stop）。
+func startContainer(ctx context.Context, job *model.Job, dir string, sc *stepContext, out io.Writer) (*jobContainer, error) {
+	name := "flow-" + job.ID
+	_ = exec.Command("docker", "rm", "-f", name).Run() // Runner 异常退出时留下的同名容器
+	args := []string{"run", "-d", "--name", name, "-v", dir + ":" + containerWS, "-w", containerWS}
+	args = append(args, sc.mountArgs()...)
+	// 绕过镜像的入口脚本只让容器常驻；Step 都经 docker exec 执行，本来就不走入口脚本
+	args = append(args, "--entrypoint", "tail", job.Image, "-f", "/dev/null")
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Env = baseEnv()
+	cmd.Stderr = out // 拉取镜像的进度
+	if err := cmd.Run(); err != nil {
+		_ = exec.Command("docker", "rm", "-f", name).Run()
+		return nil, fmt.Errorf("start container %s: %w", job.Image, err)
+	}
+	c := &jobContainer{name: name, path: defaultUnixPaths}
+	inspect := exec.CommandContext(ctx, "docker", "container", "inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", name)
+	inspect.Env = baseEnv()
+	if b, err := inspect.Output(); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if p, ok := strings.CutPrefix(strings.TrimSpace(line), "PATH="); ok && p != "" {
+				c.path = p
+			}
+		}
+	}
+	return c, nil
+}
+
+func (c *jobContainer) stop() {
+	cmd := exec.Command("docker", "rm", "-f", c.name)
+	cmd.Env = baseEnv()
+	_ = cmd.Run()
 }
 
 // baseEnv 返回透传给 Step 与 git 的 Runner 进程变量。

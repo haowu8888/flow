@@ -42,6 +42,8 @@ type stepContext struct {
 	paths   []string
 	outputs map[string]string
 	mounts  []string // docker -v 参数：缓存目录等
+	// container 是 Job 的容器（指定 image 时，第一个在容器里执行的 Step 之前启动）
+	container *jobContainer
 }
 
 func (r *Runner) newStepContext(job *model.Job, dir string, out io.Writer) *stepContext {
@@ -88,8 +90,11 @@ func (sc *stepContext) vars(inContainer bool) map[string]string {
 	}
 	if len(sc.paths) > 0 {
 		base := defaultUnixPaths
-		if !inContainer {
+		switch {
+		case !inContainer:
 			base = os.Getenv("PATH")
+		case sc.container != nil:
+			base = sc.container.path // 镜像自己的 PATH（如 golang 镜像的 /usr/local/go/bin）
 		}
 		mapped := make([]string, len(sc.paths))
 		for i, p := range sc.paths {

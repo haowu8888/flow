@@ -292,9 +292,25 @@ func (r *Runner) runSteps(ctx context.Context, a *protocol.ClaimResponse, dir st
 	env := jobEnv(a)
 	sc := r.newStepContext(job, dir, out)
 	defer func() { a.Outputs = sc.outputs }()
+	defer func() {
+		if sc.container != nil {
+			sc.container.stop()
+		}
+	}()
 	for i, step := range job.Steps {
 		fmt.Fprintf(out, "==> [%d/%d] %s\n", i+1, len(job.Steps), step.Name)
 		r.reportStep(ctx, job, i, model.StatusRunning, 0, nil)
+		// 只有网盘上传这类在 Runner 本机执行的步骤时不必拉镜像，所以等第一个要进容器的步骤再启动
+		if job.Image != "" && nativeSteps[step.Kind] == nil && sc.container == nil {
+			c, err := startContainer(ctx, job, dir, sc, out)
+			if err != nil {
+				if ctx.Err() == nil {
+					r.reportStep(ctx, job, i, model.StatusFailed, -1, nil)
+				}
+				return -1, fmt.Errorf("step %q: %w", step.Name, err)
+			}
+			sc.container = c
+		}
 		before := maps.Clone(sc.outputs)
 		base := maps.Clone(env)
 		maps.Copy(base, sc.vars(job.Image != ""))
