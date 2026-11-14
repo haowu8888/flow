@@ -9,10 +9,10 @@ import (
 // $FLOW_PATH 写的目录加在 PATH 前面：容器里接在镜像自己的 PATH 后面（不能丢掉 golang 镜像的 /usr/local/go/bin），本机接在 Runner 的 PATH 后面。
 func TestFlowPathKeepsImagePath(t *testing.T) {
 	dir, tools := t.TempDir(), t.TempDir()
-	sc := &stepContext{dir: dir, tools: tools, env: map[string]string{}, outputs: map[string]string{}}
-	os.MkdirAll(filepath.Join(dir, ctxDir), 0o755)
+	sc := &stepContext{dir: dir, ctx: dir + ctxSuffix, tools: tools, env: map[string]string{}, outputs: map[string]string{}}
+	defer sc.remove()
 	sc.vars(true)
-	os.WriteFile(filepath.Join(dir, ctxDir, "path"), []byte("/flow-tools/bun\n/workspace/bin\n"), 0o644)
+	os.WriteFile(filepath.Join(sc.ctx, "path"), []byte("/flow-tools/bun\n/workspace/bin\n"), 0o644)
 	sc.collect(os.Stderr)
 
 	if got := sc.vars(true)["PATH"]; got != "/workspace/bin:/flow-tools/bun:"+defaultUnixPaths {

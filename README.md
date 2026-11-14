@@ -36,7 +36,7 @@
 - **Step 环境**：只继承 PATH/HOME 等白名单变量，不会拿到 Runner Token。
 - **流水线权限**：每条流水线有成员与角色（内置管理员 / 开发者 / 运行者 / 查看者，可在「角色管理」自定义），权限细分为查看、运行、编辑、删除、删除运行记录、管理成员；创建人与租户管理员拥有全部权限，公开流水线所有成员可查看，租户只读成员最多查看。
 - **构建节点**：自建节点（`/api/runner/install.sh` 一条命令安装 flow-runner 并注册为 systemd 服务）、GitHub 节点（任务排队时调用 `workflow_dispatch` 触发仓库工作流，工作流中 `flow-runner -once` 领取一个任务后退出；10 分钟未被领取重新触发）、主机 Agent（主机以 Agent 方式接入时，部署 Runner 把上传内容与脚本经 Server 交给主机上的 `flow-runner -agent` 执行并转发日志，主机无需开放 SSH；Agent 失联 60s 后任务失败）。节点上报系统、架构、主机名、版本与并发；任务 `runs-on: [node:<名称>]` 只在该节点执行。
-- **内置步骤与服务连接**：步骤写 `kind:` + `with:`（参数注入为 `INPUT_*`）使用内置步骤库（环境安装、构建、Docker、Git、通知、OSS / Cloudreve、构建物上传下载等，`GET /api/step-kinds` 列出）；`connection:` 引用「服务连接」（Git 平台、镜像仓库、npm、OSS、Cloudreve、Bark / 企业微信 / Telegram / 邮件），字段以 `CONN_*` 注入并脱敏。步骤间用 `$FLOW_ENV` / `$FLOW_PATH` / `$FLOW_OUTPUT` 传递变量、PATH 与任务输出，下游任务以环境变量读取上游输出，`if:` 表达式（`== != =~ !~ && || !`）决定是否执行；因条件不满足（或 `when: on_failure` 未触发）而跳过的任务视为已满足依赖，不阻塞下游，上游失败导致的跳过才向下传递。
+- **内置步骤与服务连接**：步骤写 `kind:` + `with:`（参数注入为 `INPUT_*`）使用内置步骤库（环境安装、构建、Docker、Git、通知、OSS / Cloudreve、构建物上传下载等，`GET /api/step-kinds` 列出）；`connection:` 引用「服务连接」（Git 平台、镜像仓库、npm、OSS、Cloudreve、Bark / 企业微信 / Telegram / 邮件），字段以 `CONN_*` 注入并脱敏。步骤间用 `$FLOW_ENV` / `$FLOW_PATH` / `$FLOW_OUTPUT` 传递变量、PATH 与任务输出（这些文件在工作目录之外，步骤 `git clean -fdx` 不影响），下游任务以环境变量读取上游输出，`if:` 表达式（`== != =~ !~ && || !`）决定是否执行；因条件不满足（或 `when: on_failure` 未触发）而跳过的任务视为已满足依赖，不阻塞下游，上游失败导致的跳过才向下传递。
 - **变量**：流水线变量（可设为运行时输入）、通用变量组（租户级，私密变量加密并脱敏）、流水线级 / 租户级密钥，优先级依次升高；`cache_dirs` 为容器任务挂载按流水线隔离的缓存目录。
 - **任务插件与审批消息**：任务结束时按状态发送插件消息（钉钉 / 飞书 / Webhook 或服务连接）；人工卡点进入待审批时经服务连接发送带签名「通过 / 驳回」链接的消息（需 `FLOW_PUBLIC_URL`）。
 
@@ -180,6 +180,7 @@ source:                 # 可选：Runner 在执行 Step 前浅克隆代码到�
   branch: main          # 默认分支；Webhook 触发时用推送的分支 / 标签与提交，手动运行可传 FLOW_GIT_BRANCH 覆盖
   token_secret: GIT_TOKEN   # 可选：访问令牌所在的密钥名（HTTP Basic，用户名默认 oauth2，可用 username 修改）
   depth: 50             # 默认 50
+  mirrors: [https://ghfast.top/]   # 可选：加速地址前缀（拉取地址为前缀 + 仓库地址）。先直连取提交号、自动重试，再经加速地址下载，提交号一致才使用；配置了 token_secret 时不使用
   report_status: true   # 可选：把运行结果回写为提交状态（GitHub / GitLab / Gitea 的提交与合并请求页显示），令牌需有写状态权限
   provider: gitlab      # 可选：github / gitlab / gitea，省略时按仓库地址推断（github.com、主机名含 gitlab / gitea）
 notify:                 # 可选：运行结束通知

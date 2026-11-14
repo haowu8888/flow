@@ -662,7 +662,7 @@ func admit(active []*model.Run, limit int) bool {
 
 // checkoutFor 决定拉取哪份代码：Webhook 注入的 PR 引用 / 标签 / 分支 / 提交优先，手动运行可传 FLOW_GIT_BRANCH 覆盖默认分支。
 func checkoutFor(src *pipeline.Source, env map[string]string) *model.Checkout {
-	c := &model.Checkout{URL: src.URL, Ref: src.Branch, Username: src.Username, TokenSecret: src.TokenSecret, Depth: src.Depth}
+	c := &model.Checkout{URL: src.URL, Ref: src.Branch, Username: src.Username, TokenSecret: src.TokenSecret, Depth: src.Depth, Mirrors: src.Mirrors}
 	if c.Depth == 0 {
 		c.Depth = defaultCloneDepth
 	}

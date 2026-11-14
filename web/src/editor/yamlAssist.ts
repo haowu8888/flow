@@ -94,6 +94,7 @@ const SOURCE: Keys = {
   username: 'HTTP 用户名，默认 oauth2',
   token_secret: '存放访问令牌的密钥名',
   depth: '浅克隆深度，默认 50',
+  mirrors: '加速地址前缀列表，如 https://ghfast.top/；提交号与直连一致才使用',
   report_status: 'true 时把运行结果回写为提交状态',
   provider: 'github / gitlab / gitea，省略时按地址推断',
 }

@@ -858,6 +858,9 @@ function SourceFields() {
       <Field label="克隆深度">
         <input type="number" min={0} value={spec.source?.depth ?? ''} placeholder="50" onChange={(e) => set(['source', 'depth'], e.target.value === '' ? undefined : +e.target.value)} />
       </Field>
+      <Field label="加速地址" hint="构建机访问仓库慢或常断开时填写，如 https://ghfast.top/。先直连取得提交号，再经加速地址下载，提交号一致才使用；配置了访问令牌时不使用">
+        <TagInput mono value={spec.source?.mirrors ?? []} onChange={(v) => set(['source', 'mirrors'], v.length ? v : undefined)} placeholder="地址前缀，回车添加" />
+      </Field>
       <label className="check">
         <input type="checkbox" checked={!!spec.source?.report_status} onChange={(e) => set(['source', 'report_status'], e.target.checked || undefined)} />
         把运行结果回写到提交 / 合并请求

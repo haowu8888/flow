@@ -291,6 +291,7 @@ func (r *Runner) runSteps(ctx context.Context, a *protocol.ClaimResponse, dir st
 	job := a.Job
 	env := jobEnv(a)
 	sc := r.newStepContext(job, dir, out)
+	defer sc.remove()
 	defer func() { a.Outputs = sc.outputs }()
 	defer func() {
 		if sc.container != nil {

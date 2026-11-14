@@ -92,6 +92,8 @@ export interface SourceSpec {
   username?: string
   token_secret?: string
   depth?: number
+  /** 加速地址前缀：拉取地址为「前缀 + 仓库地址」，只认提交号一致的结果 */
+  mirrors?: string[]
   /** 把运行结果回写为提交状态 */
   report_status?: boolean
   provider?: string
