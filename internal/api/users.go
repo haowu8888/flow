@@ -1,7 +1,10 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"flow/internal/auth"
@@ -56,11 +59,22 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	plain, p, err := s.auth.LoginFrom(r.Context(), req.Username, req.Password, auth.SessionMeta{UserAgent: r.UserAgent(), IP: clientIP(r)})
+	ip := clientIP(r)
+	if wait, ok := s.logins.allow(ip, req.Username); !ok {
+		mins := int((wait + time.Minute - 1) / time.Minute)
+		w.Header().Set("Retry-After", strconv.Itoa(int((wait+time.Second-1)/time.Second)))
+		writeError(w, http.StatusTooManyRequests, fmt.Errorf("登录失败次数过多，请 %d 分钟后再试", mins))
+		return
+	}
+	plain, p, err := s.auth.LoginFrom(r.Context(), req.Username, req.Password, auth.SessionMeta{UserAgent: r.UserAgent(), IP: ip})
+	if errors.Is(err, auth.ErrInvalidCredentials) {
+		s.logins.fail(ip, req.Username)
+	}
 	if err != nil {
 		respond(w, 0, nil, err)
 		return
 	}
+	s.logins.success(ip, req.Username)
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: plain, Path: "/", MaxAge: int(auth.SessionTTL / time.Second),
 		HttpOnly: true, Secure: s.cfg.SecureCookie, SameSite: http.SameSiteLaxMode,

@@ -46,16 +46,17 @@ type Config struct {
 }
 
 type server struct {
-	eng  *engine.Engine
-	auth *auth.Service
-	cfg  Config
+	eng    *engine.Engine
+	auth   *auth.Service
+	cfg    Config
+	logins *loginLimiter
 }
 
 // handler 是已认证用户请求的处理函数。
 type handler func(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 
 func NewHandler(eng *engine.Engine, authSvc *auth.Service, cfg Config) http.Handler {
-	s := &server{eng: eng, auth: authSvc, cfg: cfg}
+	s := &server{eng: eng, auth: authSvc, cfg: cfg, logins: newLoginLimiter()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 

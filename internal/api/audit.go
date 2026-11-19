@@ -246,12 +246,37 @@ func first(vals ...string) string {
 }
 
 // clientIP 取连接地址；部署在反向代理后时这是代理地址。
+// clientIP 返回请求方 IP。直连地址是回环或内网（本机或 Docker 网桥上的反向代理）时，
+// 取 X-Forwarded-For 中最右边的非内网地址，其次取 X-Real-IP；公网直连时忽略这些头，防止伪造。
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !trustedProxy(host) {
+		return host
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			ip := strings.TrimSpace(parts[i])
+			if net.ParseIP(ip) == nil {
+				break
+			}
+			if !trustedProxy(ip) || i == 0 {
+				return ip
+			}
+		}
+	}
+	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(ip) != nil {
+		return ip
 	}
 	return host
+}
+
+func trustedProxy(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
 }
 
 // listAudit 查询审计日志（管理员）：?actor=&category=&target=&before=RFC3339&limit=
