@@ -201,3 +201,86 @@ stages:
 		t.Errorf("after remove = %+v", envs[0])
 	}
 }
+
+// 主机部署 deploy.artifact：下载上游「构建物上传」的产物包解压到每台主机，部署记录与部署历史带上产物包；重新部署沿用同一个包。
+func TestDeployArtifact(t *testing.T) { storetest.ForEach(t, testDeployArtifact) }
+
+func testDeployArtifact(t *testing.T, s store.Store) {
+	ts := startStack(t, s)
+	srv := sshtest.Start(t)
+	target := filepath.Join(t.TempDir(), "app")
+	grp := post[model.HostGroup](t, ts, "/api/host-groups", `{"name":"web"}`, http.StatusCreated)
+	post[model.Host](t, ts, "/api/hosts", fmt.Sprintf(`{"name":"web-1","address":%q,"port":%d,"username":%q,"auth_type":"password","credential":%q,"group_ids":[%q]}`,
+		srv.Host, srv.Port, srv.User, srv.Password, grp.ID), http.StatusCreated)
+
+	yaml := `
+name: pkg
+stages:
+  - name: build
+    jobs:
+      - name: build
+        steps:
+          - run: mkdir -p dist/static && echo "build $FLOW_RUN_NUMBER" > dist/app.txt && echo css > dist/static/a.css
+          - kind: artifact-upload
+            with: {name: app, paths: dist}
+  - name: deploy
+    jobs:
+      - name: deploy
+        deploy: {hosts: web, artifact: app, target: "` + target + `"}
+        steps: [{run: "cat app.txt static/a.css > deployed.txt"}]
+`
+	if code, body := ts.do(t, http.MethodPost, "/api/pipelines/validate", strings.Replace(yaml, "artifact: app,", "artifact: app, upload: dist,", 1)); code != http.StatusBadRequest || !strings.Contains(body, "mutually exclusive") {
+		t.Errorf("artifact + upload = %d %s", code, body)
+	}
+	p := createPipeline(t, ts, yaml)
+	read := func() string { b, _ := os.ReadFile(filepath.Join(target, "deployed.txt")); return string(b) }
+	first := waitRun(t, ts, post[protocol.RunDetail](t, ts, "/api/pipelines/"+p.ID+"/runs", "", http.StatusCreated).Run.ID)
+	log := getText(t, ts, "/api/jobs/"+jobsByName(first)["deploy"].ID+"/logs")
+	if first.Run.Status != model.StatusSuccess || read() != "build 1\ncss\n" || !strings.Contains(log, "部署构建物 app v1") {
+		t.Fatalf("run = %s, deployed %q, log:\n%s", first.Run.Status, read(), log)
+	}
+	second := waitRun(t, ts, post[protocol.RunDetail](t, ts, "/api/pipelines/"+p.ID+"/runs", "", http.StatusCreated).Run.ID)
+	if second.Run.Status != model.StatusSuccess || read() != "build 2\ncss\n" {
+		t.Fatalf("second run = %s, deployed %q", second.Run.Status, read())
+	}
+
+	var hist struct {
+		Items []struct {
+			Run         model.Run           `json:"run"`
+			Artifacts   []model.Artifact    `json:"artifacts"`
+			Deployments []*model.Deployment `json:"deployments"`
+		} `json:"items"`
+	}
+	getJSON(t, ts, "/api/pipelines/"+p.ID+"/deliveries", &hist)
+	if len(hist.Items) != 2 {
+		t.Fatalf("deliveries = %+v", hist)
+	}
+	for i, want := range []string{"v2", "v1"} {
+		it := hist.Items[i]
+		if len(it.Deployments) != 1 || len(it.Artifacts) != 1 {
+			t.Fatalf("item %d = %+v", i, it)
+		}
+		a := it.Deployments[0].Artifact
+		if a == nil || a.Name != "app" || a.Version != want || a.ID != it.Artifacts[0].ID || a.Size != it.Artifacts[0].Size || a.Size == 0 {
+			t.Errorf("item %d deployed artifact = %+v, artifacts %+v", i, a, it.Artifacts)
+		}
+	}
+
+	// 重新部署 #1：沿用 #1 的产物包 v1。
+	rd := waitRun(t, ts, post[protocol.RunDetail](t, ts, "/api/runs/"+first.Run.ID+"/redeploy", `{"job":"deploy"}`, http.StatusCreated).Run.ID)
+	if rd.Run.Status != model.StatusSuccess || read() != "build 1\ncss\n" {
+		t.Fatalf("redeploy = %s, deployed %q", rd.Run.Status, read())
+	}
+	var deps []model.Deployment
+	json.Unmarshal([]byte(getText(t, ts, "/api/deployments")), &deps)
+	if len(deps) != 3 || deps[0].RunID != rd.Run.ID || deps[0].Artifact == nil || deps[0].Artifact.Version != "v1" {
+		t.Errorf("deployments = %+v", deps)
+	}
+
+	// 上游没有这个构建物：部署任务失败并说明原因。
+	bad := createPipeline(t, ts, strings.Replace(strings.Replace(yaml, "name: pkg", "name: pkg2", 1), "artifact: app,", "artifact: nope,", 1))
+	run := waitRun(t, ts, post[protocol.RunDetail](t, ts, "/api/pipelines/"+bad.ID+"/runs", "", http.StatusCreated).Run.ID)
+	if log := getText(t, ts, "/api/jobs/"+jobsByName(run)["deploy"].ID+"/logs"); run.Run.Status != model.StatusFailed || !strings.Contains(log, `没有名为 "nope" 的构建物（可用：app）`) {
+		t.Errorf("missing artifact = %s, log:\n%s", run.Run.Status, log)
+	}
+}

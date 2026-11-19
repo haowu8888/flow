@@ -280,17 +280,31 @@ func (e *Engine) Artifact(ctx context.Context, id string) (*model.Artifact, erro
 	return e.store.GetArtifact(ctx, id)
 }
 
-func artifactMAC(id string) string { return "artifact:" + id }
+// artifactLinkTTL 是构建物免登录下载链接的有效期：链接写进通知、任务输出后可能被转发，不能一直有效。
+// 部署历史等页面每次打开都重新签发，不受影响。
+const artifactLinkTTL = 7 * 24 * time.Hour
 
-// ArtifactLinkPath 返回构建物的免登录下载路径（带签名，构建物删除后失效），供通知与外部下载使用。
-func (e *Engine) ArtifactLinkPath(a *model.Artifact) string {
-	return "/api/open/artifacts/" + a.ID + "/download?sig=" + url.QueryEscape(e.cipher.MAC(artifactMAC(a.ID)))
+// ErrLinkExpired 表示免登录下载链接已过期。
+var ErrLinkExpired = fmt.Errorf("%w: link expired", ErrForbidden)
+
+func artifactMAC(id string, exp int64) string {
+	return "artifact:" + id + ":" + strconv.FormatInt(exp, 10)
 }
 
-// ArtifactByLink 校验免登录下载链接的签名并返回构建物。
-func (e *Engine) ArtifactByLink(ctx context.Context, id, sig string) (*model.Artifact, error) {
-	if !e.cipher.VerifyMAC(artifactMAC(id), sig) {
+// ArtifactLinkPath 返回构建物的免登录下载路径（带签名与过期时间，构建物删除后失效），供通知与外部下载使用。
+func (e *Engine) ArtifactLinkPath(a *model.Artifact) string {
+	exp := e.now().Add(artifactLinkTTL).Unix()
+	return "/api/open/artifacts/" + a.ID + "/download?exp=" + strconv.FormatInt(exp, 10) + "&sig=" + url.QueryEscape(e.cipher.MAC(artifactMAC(a.ID, exp)))
+}
+
+// ArtifactByLink 校验免登录下载链接的签名与有效期并返回构建物。
+func (e *Engine) ArtifactByLink(ctx context.Context, id, exp, sig string) (*model.Artifact, error) {
+	ts, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || !e.cipher.VerifyMAC(artifactMAC(id, ts), sig) {
 		return nil, ErrUnauthorized
+	}
+	if e.now().Unix() > ts {
+		return nil, ErrLinkExpired
 	}
 	return e.store.GetArtifact(ctx, id)
 }

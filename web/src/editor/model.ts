@@ -71,6 +71,8 @@ export interface JobSpec {
 
 export interface DeploySpec {
   hosts?: string
+  /** 部署的上游构建物名称（「构建物上传」步骤的 name） */
+  artifact?: string
   upload?: string
   target?: string
   batch?: number
@@ -90,6 +92,8 @@ export interface SourceSpec {
   username?: string
   token_secret?: string
   depth?: number
+  /** 加速地址前缀：拉取地址为「前缀 + 仓库地址」，只认提交号一致的结果 */
+  mirrors?: string[]
   /** 把运行结果回写为提交状态 */
   report_status?: boolean
   provider?: string
@@ -235,6 +239,7 @@ function normalizeJob(v: unknown): JobSpec {
     approvers: strList(j.approvers),
     deploy: obj(j.deploy) && {
       hosts: str(obj(j.deploy)!.hosts),
+      artifact: str(obj(j.deploy)!.artifact),
       upload: str(obj(j.deploy)!.upload),
       target: str(obj(j.deploy)!.target),
       batch: typeof obj(j.deploy)!.batch === 'number' ? (obj(j.deploy)!.batch as number) : undefined,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { parse as parseYaml } from 'yaml'
 import { api, ApiError } from '../api'
 import { Icon } from '../components/Icon'
@@ -12,11 +12,14 @@ import { PipelineStats } from './PipelineStats'
 import { RunDetail } from './RunDetail'
 import { pipelineSource, RevisionHistory } from '../editor/History'
 import { SettingsCard } from '../editor/Panels'
-import { PipelineEditor, type EditorHandle } from '../editor/PipelineEditor'
+import type { EditorHandle } from '../editor/PipelineEditor'
 import { fmtDuration, fmtShort, fmtTime, shortSha, triggerLabel } from '../format'
 import { usePolling, useTicker } from '../hooks'
 import { href, navigate, setLeaveGuard, type EditSection, type PipelineTab } from '../router'
 import { hasPerm, isTerminal, type Pipeline, type Run } from '../types'
+
+// 画布编辑器（含 React Flow）只在编辑页用到，按需加载
+const PipelineEditor = lazy(() => import('../editor/PipelineEditor').then((m) => ({ default: m.PipelineEditor })))
 
 const tabs: [PipelineTab, string][] = [
   ['latest', '最近运行'],
@@ -492,18 +495,20 @@ function EditTab({ pipeline, section, onSaved, readOnly }: { pipeline: Pipeline;
   )
 
   const editor = (s: EditSection) => (
-    <PipelineEditor
-      key={`${editorKey}:${s}`}
-      handle={editorRef}
-      value={draft}
-      onChange={(v) => {
-        setDraft(v)
-        setMsg(undefined)
-      }}
-      readOnly={readOnly}
-      section={s}
-      actions={s === 'flow' ? status : undefined}
-    />
+    <Suspense fallback={<p className="muted center">加载中…</p>}>
+      <PipelineEditor
+        key={`${editorKey}:${s}`}
+        handle={editorRef}
+        value={draft}
+        onChange={(v) => {
+          setDraft(v)
+          setMsg(undefined)
+        }}
+        readOnly={readOnly}
+        section={s}
+        actions={s === 'flow' ? status : undefined}
+      />
+    </Suspense>
   )
 
   return (

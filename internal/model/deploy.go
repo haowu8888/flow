@@ -119,8 +119,19 @@ type Deployment struct {
 	Commit          string     `json:"commit,omitempty"`
 	Status          Status     `json:"status"`
 	CreatedBy       string     `json:"created_by,omitempty"` // 运行的触发人
+	// Artifact 是本次部署的构建物（deploy.artifact），构建物被清理后仍保留记录。
+	Artifact *DeployedArtifact `json:"artifact,omitempty"`
 	StartedAt       time.Time  `json:"started_at"`
 	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+}
+
+// DeployedArtifact 是部署记录中的构建物。
+type DeployedArtifact struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	Format  string `json:"format,omitempty"`
+	Size    int64  `json:"size"`
 }
 
 // HostState 是部署任务在一台主机上的进度。
@@ -137,6 +148,8 @@ type HostState struct {
 type DeployTarget struct {
 	Group  string `json:"group"`            // 主机组名
 	Upload string `json:"upload,omitempty"` // 上传工作目录中的路径（文件或目录）
+	// Artifact 是部署的上游命名构建物，下载后解压到 Target。
+	Artifact string `json:"artifact,omitempty"`
 	Target string `json:"target,omitempty"` // 远程目录：上传到这里，并作为脚本的工作目录
 	Batch  int    `json:"batch,omitempty"`  // 每批主机数，0 为全部同时
 	// Approval 为 true 时任务就绪后先进入待审批（环境要求审批）。

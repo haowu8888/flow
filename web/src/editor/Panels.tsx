@@ -237,14 +237,24 @@ function JobPanel({ r }: { r: JobRef }) {
   )
 }
 
-/** 主机部署的目标：主机组、上传内容、远程目录、分批。 */
+/** 主机部署的目标：主机组、部署的构建物（或上传内容）、远程目录、分批。 */
 function DeployFields({ r, job }: { r: JobRef; job: JobSpec }) {
-  const { apply, hostGroups, environments, readOnly } = useEditor()
+  const { apply, hostGroups, environments, readOnly, spec } = useEditor()
   const d = job.deploy ?? {}
   const p = [...jobPath(r), 'deploy']
   const set = (k: string, v: unknown) => apply(ops.set([...p, k], v), `${r.si}:${r.ji}:deploy.${k}`)
   const group = hostGroups.find((g) => g.name === d.hosts)
   const env = environments.find((e) => e.id === group?.environment_id)
+  // 前面阶段「构建物上传」步骤的名称
+  const artifacts = [
+    ...new Set(
+      spec.stages
+        .slice(0, r.si)
+        .flatMap((s) => s.jobs.flatMap((j) => j.steps))
+        .filter((s) => s.kind === 'artifact-upload' && s.with?.name)
+        .map((s) => s.with!.name),
+    ),
+  ]
   return (
     <div className="ed-deploy">
       <Field
@@ -276,10 +286,37 @@ function DeployFields({ r, job }: { r: JobRef; job: JobSpec }) {
           })}
         </select>
       </Field>
-      <Field label="上传内容" hint="工作目录中的目录或文件（通常是上游任务的产物），目录会上传其中的内容">
-        <Text mono value={d.upload} onChange={(v) => set('upload', v)} placeholder="如 dist、target/app.jar" />
+      <Field
+        label="部署构建物"
+        hint={
+          artifacts.length === 0 && !d.artifact
+            ? '上游任务添加「构建物上传」步骤后可选择；部署记录里会显示部署的产物包'
+            : '下载上游的产物包并解压到每台主机的远程目录，部署历史里记录产物包与版本'
+        }
+      >
+        <select
+          value={d.artifact ?? ''}
+          disabled={readOnly}
+          onChange={(e) => {
+            set('artifact', e.target.value || undefined)
+            if (e.target.value && d.upload) set('upload', undefined)
+          }}
+        >
+          <option value="">不下载构建物{d.upload ? '（使用上传内容）' : ''}</option>
+          {d.artifact && !artifacts.includes(d.artifact) && <option value={d.artifact}>{d.artifact}（上游没有）</option>}
+          {artifacts.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
       </Field>
-      <Field label="远程目录" hint="上传到这里，并作为脚本的工作目录">
+      {!d.artifact && (
+        <Field label="上传内容" hint="工作目录中的目录或文件（通常是上游任务的产物），目录会上传其中的内容">
+          <Text mono value={d.upload} onChange={(v) => set('upload', v)} placeholder="如 dist、target/app.jar" />
+        </Field>
+      )}
+      <Field label="远程目录" hint={d.artifact ? '产物包解压到这里，并作为脚本的工作目录' : '上传到这里，并作为脚本的工作目录'}>
         <Text mono value={d.target} onChange={(v) => set('target', v)} placeholder="/tmp/flow-deploy/流水线名" />
       </Field>
       <Field label="分批部署" hint="前一批全部成功才继续，失败即停止，剩余主机不受影响">
@@ -821,6 +858,9 @@ function SourceFields() {
       <Field label="克隆深度">
         <input type="number" min={0} value={spec.source?.depth ?? ''} placeholder="50" onChange={(e) => set(['source', 'depth'], e.target.value === '' ? undefined : +e.target.value)} />
       </Field>
+      <Field label="加速地址" hint="构建机访问仓库慢或常断开时填写，如 https://ghfast.top/。先直连取得提交号，再经加速地址下载，提交号一致才使用；配置了访问令牌时不使用">
+        <TagInput mono value={spec.source?.mirrors ?? []} onChange={(v) => set(['source', 'mirrors'], v.length ? v : undefined)} placeholder="地址前缀，回车添加" />
+      </Field>
       <label className="check">
         <input type="checkbox" checked={!!spec.source?.report_status} onChange={(e) => set(['source', 'report_status'], e.target.checked || undefined)} />
         把运行结果回写到提交 / 合并请求
@@ -1196,7 +1236,7 @@ function RunEnvFields({ r, job }: { r: JobRef; job: JobSpec }) {
         </div>
       </div>
       {containerMode && (
-        <Field label="容器镜像地址" hint="每个步骤在这个镜像的容器中执行，代码目录挂载为 /workspace">
+        <Field label="容器镜像地址" hint="任务的所有步骤在这个镜像的同一个容器中执行，代码目录挂载为 /workspace">
           <Text mono value={job.image} onChange={(v) => set('image', v || undefined)} placeholder="如 node:22、golang:1.23、maven:3-eclipse-temurin-17" />
         </Field>
       )}

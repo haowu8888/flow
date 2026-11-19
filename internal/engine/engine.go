@@ -527,7 +527,7 @@ func (e *Engine) startRun(ctx context.Context, tx store.Tx, pipelineID, trigger,
 				if target == "" {
 					target = "/tmp/flow-deploy/" + spec.Name
 				}
-				opts.Deploy = &model.DeployTarget{Group: d.Hosts, Upload: d.Upload, Target: target, Batch: d.Batch}
+				opts.Deploy = &model.DeployTarget{Group: d.Hosts, Upload: d.Upload, Artifact: d.Artifact, Target: target, Batch: d.Batch}
 				// 部署到要求审批的环境：任务就绪后先等待审批。
 				if g, err := tx.GetHostGroupByName(ctx, p.TenantID, d.Hosts); err == nil && g.EnvironmentID != "" {
 					if envr, err := tx.GetEnvironment(ctx, g.EnvironmentID); err == nil && envr.RequireApproval {
@@ -662,7 +662,7 @@ func admit(active []*model.Run, limit int) bool {
 
 // checkoutFor 决定拉取哪份代码：Webhook 注入的 PR 引用 / 标签 / 分支 / 提交优先，手动运行可传 FLOW_GIT_BRANCH 覆盖默认分支。
 func checkoutFor(src *pipeline.Source, env map[string]string) *model.Checkout {
-	c := &model.Checkout{URL: src.URL, Ref: src.Branch, Username: src.Username, TokenSecret: src.TokenSecret, Depth: src.Depth}
+	c := &model.Checkout{URL: src.URL, Ref: src.Branch, Username: src.Username, TokenSecret: src.TokenSecret, Depth: src.Depth, Mirrors: src.Mirrors}
 	if c.Depth == 0 {
 		c.Depth = defaultCloneDepth
 	}
@@ -764,6 +764,19 @@ func (e *Engine) Claim(ctx context.Context, r RunnerInfo) (*Assignment, error) {
 	if msg := e.resolveConnections(ctx, claimed, a); msg != "" {
 		_ = e.appendLog(ctx, claimed.ID, []byte("==> warning: "+msg+"\n"))
 	}
+	// 无依赖的任务也查询：重新部署的任务依赖已清空，产物来自原运行。
+	arts, err := e.upstreamArtifacts(ctx, claimed)
+	if err != nil {
+		e.releaseClaim(ctx, claimed.ID, r.ID)
+		return nil, err
+	}
+	for _, art := range arts {
+		if art.Name == "" {
+			a.Artifacts = append(a.Artifacts, art)
+		} else {
+			a.Named = append(a.Named, art)
+		}
+	}
 	if claimed.Deploy != nil {
 		var g *model.HostGroup
 		a.Hosts, g, a.DeployError = e.resolveDeploy(ctx, claimed)
@@ -781,20 +794,14 @@ func (e *Engine) Claim(ctx context.Context, r RunnerInfo) (*Assignment, error) {
 				maps.Copy(a.Secrets, secrets)
 			}
 		}
-		if a.DeployError == "" {
-			e.recordDeployment(ctx, claimed, g, a.Hosts)
+		var deployed *model.DeployedArtifact
+		if name := claimed.Deploy.Artifact; name != "" && a.DeployError == "" {
+			if deployed = namedArtifact(a.Named, name); deployed == nil {
+				a.DeployError = namedArtifactMissing(a.Named, name)
+			}
 		}
-	}
-	// 无依赖的任务也查询：重新部署的任务依赖已清空，产物来自原运行。
-	arts, err := e.upstreamArtifacts(ctx, claimed)
-	if err != nil {
-		return nil, err
-	}
-	for _, art := range arts {
-		if art.Name == "" {
-			a.Artifacts = append(a.Artifacts, art)
-		} else {
-			a.Named = append(a.Named, art)
+		if a.DeployError == "" {
+			e.recordDeployment(ctx, claimed, g, a.Hosts, deployed)
 		}
 	}
 	// 上游任务的输出作为环境变量（覆盖流水线与任务中的同名变量，密钥仍然优先）。
@@ -802,6 +809,25 @@ func (e *Engine) Claim(ctx context.Context, r RunnerInfo) (*Assignment, error) {
 		claimed.Env = mergeEnv(claimed.Env, outs)
 	}
 	return a, nil
+}
+
+// releaseClaim 把已领取但没能下发给 Runner 的 Job 放回队列：否则它一直显示执行中，要等租约过期才被回收，还白占一次重试。
+func (e *Engine) releaseClaim(ctx context.Context, jobID, runnerID string) {
+	var runID string
+	err := e.store.Atomic(ctx, func(tx store.Tx) error {
+		j, err := e.lockLeasedJob(ctx, tx, jobID, runnerID)
+		if err != nil {
+			return err
+		}
+		j.Status, j.RunnerID, j.StartedAt, j.LeaseUntil = model.StatusQueued, "", nil, time.Time{}
+		runID = j.RunID
+		return tx.UpdateJob(ctx, j)
+	})
+	if err != nil {
+		e.logf("job %s: release claim: %v", jobID, err)
+		return
+	}
+	e.runChanged(runID)
 }
 
 // upstreamArtifacts 返回 Job 全部上游（含间接上游，例如隔着人工卡点）的产物，按 Job 定义顺序排列，后者覆盖前者的同名文件。

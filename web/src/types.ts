@@ -297,6 +297,8 @@ export interface Deployment {
   created_by?: string
   started_at: string
   finished_at?: string
+  /** 部署的构建物（deploy.artifact） */
+  artifact?: { id: string; name: string; version?: string; format?: string; size: number }
 }
 
 export interface TestCase {
@@ -558,7 +560,7 @@ export interface Artifact {
   created_at: string
   /** 之后按保留策略清理；为空表示永久保留 */
   expires_at?: string
-  /** 免登录下载地址（带签名） */
+  /** 免登录下载地址（带签名，7 天有效） */
   url?: string
   /** 存到对象存储连接时为「连接名 / Bucket」 */
   storage?: string

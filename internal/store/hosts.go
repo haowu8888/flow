@@ -27,7 +27,7 @@ const (
 	hostCols  = `id, tenant_id, name, address, port, username, auth_type, credential, description, host_key, group_ids,
 		checked_at, check_error, created_at, updated_at, jump_host_id, mode`
 	deployCols = `id, tenant_id, pipeline_id, pipeline_name, run_id, run_number, job_id, job_name, environment_id,
-		environment_name, group_name, hosts, git_commit, status, created_by, started_at, finished_at`
+		environment_name, group_name, hosts, git_commit, status, created_by, started_at, finished_at, artifact`
 )
 
 func scanEnv(row pgx.Row) (*model.Environment, error) {
@@ -60,7 +60,7 @@ func scanDeployment(row pgx.Row) (*model.Deployment, error) {
 	var d model.Deployment
 	if err := row.Scan(&d.ID, &d.TenantID, &d.PipelineID, &d.PipelineName, &d.RunID, &d.RunNumber, &d.JobID, &d.JobName,
 		&d.EnvironmentID, &d.EnvironmentName, &d.GroupName, &d.Hosts, &d.Commit, &d.Status, &d.CreatedBy,
-		&d.StartedAt, &d.FinishedAt); err != nil {
+		&d.StartedAt, &d.FinishedAt, &d.Artifact); err != nil {
 		return nil, mapErr(err)
 	}
 	return &d, nil
@@ -156,11 +156,11 @@ func (s pgq) ListHosts(ctx context.Context, tenantID string) ([]*model.Host, err
 
 func (s pgq) CreateDeployment(ctx context.Context, d *model.Deployment) error {
 	_, err := s.q.Exec(ctx, `INSERT INTO deployments (`+deployCols+`)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		ON CONFLICT (job_id) DO UPDATE SET hosts = EXCLUDED.hosts, git_commit = EXCLUDED.git_commit,
-			status = EXCLUDED.status, started_at = EXCLUDED.started_at, finished_at = NULL`,
+			status = EXCLUDED.status, started_at = EXCLUDED.started_at, finished_at = NULL, artifact = EXCLUDED.artifact`,
 		d.ID, d.TenantID, d.PipelineID, d.PipelineName, d.RunID, d.RunNumber, d.JobID, d.JobName, d.EnvironmentID,
-		d.EnvironmentName, d.GroupName, nonNil(d.Hosts), d.Commit, d.Status, d.CreatedBy, d.StartedAt, d.FinishedAt)
+		d.EnvironmentName, d.GroupName, nonNil(d.Hosts), d.Commit, d.Status, d.CreatedBy, d.StartedAt, d.FinishedAt, d.Artifact)
 	return mapErr(err)
 }
 
@@ -442,6 +442,9 @@ func (m *Memory) ListHosts(_ context.Context, tenantID string) ([]*model.Host, e
 func cloneDeployment(d *model.Deployment) *model.Deployment {
 	c := clone(d)
 	c.Hosts = slices.Clone(d.Hosts)
+	if d.Artifact != nil {
+		c.Artifact = clone(d.Artifact)
+	}
 	return c
 }
 
@@ -452,6 +455,7 @@ func (m *Memory) CreateDeployment(_ context.Context, dep *model.Deployment) erro
 	if i := slices.IndexFunc(d.deployments, func(x *model.Deployment) bool { return x.JobID == dep.JobID }); i >= 0 {
 		old := d.deployments[i]
 		old.Hosts, old.Commit, old.Status, old.StartedAt, old.FinishedAt = slices.Clone(dep.Hosts), dep.Commit, dep.Status, dep.StartedAt, nil
+		old.Artifact = cloneDeployment(dep).Artifact
 		return nil
 	}
 	d.deployments = append(d.deployments, cloneDeployment(dep))

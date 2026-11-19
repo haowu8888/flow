@@ -22,10 +22,13 @@ import (
 //
 // $FLOW_TOOLS 是 Runner 上跨任务复用的工具目录（安装 Node / Go / Java 等的下载缓存），
 // $FLOW_WORKSPACE 是代码目录。容器中运行时这些路径映射为容器内的路径。
+// 这三个文件放在工作目录旁边的 <工作目录>.flow 里而不是工作目录中：步骤里 git clean -fdx、
+// rm -rf ./* 清理工作目录时不会把它们一起删掉。
 
 const (
-	ctxDir           = ".flow"
+	ctxSuffix        = ".flow"
 	containerWS      = "/workspace"
+	containerCtx     = "/flow-ctx"
 	containerTools   = "/flow-tools"
 	maxOutputs       = 100
 	maxOutputBytes   = 64 << 10
@@ -37,16 +40,19 @@ var envLine = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
 // stepContext 记录一个任务内步骤间传递的状态。
 type stepContext struct {
 	dir     string // 工作目录（宿主机路径）
+	ctx     string // 上下文文件目录（宿主机路径，工作目录之外）
 	tools   string // 工具目录（宿主机路径）
 	env     map[string]string
 	paths   []string
 	outputs map[string]string
 	mounts  []string // docker -v 参数：缓存目录等
+	// container 是 Job 的容器（指定 image 时，第一个在容器里执行的 Step 之前启动）
+	container *jobContainer
 }
 
 func (r *Runner) newStepContext(job *model.Job, dir string, out io.Writer) *stepContext {
-	sc := &stepContext{dir: dir, tools: filepath.Join(r.cfg.CacheDir, "tools"), env: map[string]string{}, outputs: map[string]string{}}
-	_ = os.MkdirAll(filepath.Join(dir, ctxDir), 0o755)
+	sc := &stepContext{dir: dir, ctx: dir + ctxSuffix, tools: filepath.Join(r.cfg.CacheDir, "tools"), env: map[string]string{}, outputs: map[string]string{}}
+	_ = os.MkdirAll(sc.ctx, 0o755)
 	_ = os.MkdirAll(sc.tools, 0o755)
 	for _, p := range job.CacheDirs {
 		if !filepath.IsAbs(p) || strings.Contains(p, "..") {
@@ -69,27 +75,31 @@ func (r *Runner) newStepContext(job *model.Job, dir string, out io.Writer) *step
 
 // vars 返回本步骤额外的环境变量（容器中运行时为容器内路径），并清空上下文文件。
 func (sc *stepContext) vars(inContainer bool) map[string]string {
+	_ = os.MkdirAll(sc.ctx, 0o755) // 被上一步删掉时重建（容器里挂载的是这个目录，删掉的只是其中的文件）
 	for _, f := range []string{"env", "path", "output"} {
-		_ = os.WriteFile(filepath.Join(sc.dir, ctxDir, f), nil, 0o644)
+		_ = os.WriteFile(filepath.Join(sc.ctx, f), nil, 0o644)
 	}
-	ws, tools := sc.dir, sc.tools
+	ws, tools, cdir := sc.dir, sc.tools, sc.ctx
 	if inContainer {
-		ws, tools = containerWS, containerTools
+		ws, tools, cdir = containerWS, containerTools, containerCtx
 	}
 	v := map[string]string{
 		"FLOW_WORKSPACE": ws,
 		"FLOW_TOOLS":     tools,
-		"FLOW_ENV":       ws + "/" + ctxDir + "/env",
-		"FLOW_PATH":      ws + "/" + ctxDir + "/path",
-		"FLOW_OUTPUT":    ws + "/" + ctxDir + "/output",
+		"FLOW_ENV":       cdir + "/env",
+		"FLOW_PATH":      cdir + "/path",
+		"FLOW_OUTPUT":    cdir + "/output",
 	}
 	for k, x := range sc.env {
 		v[k] = x
 	}
 	if len(sc.paths) > 0 {
 		base := defaultUnixPaths
-		if !inContainer {
+		switch {
+		case !inContainer:
 			base = os.Getenv("PATH")
+		case sc.container != nil:
+			base = sc.container.path // 镜像自己的 PATH（如 golang 镜像的 /usr/local/go/bin）
 		}
 		mapped := make([]string, len(sc.paths))
 		for i, p := range sc.paths {
@@ -117,15 +127,15 @@ func (sc *stepContext) mapPath(p string, inContainer bool) string {
 
 // collect 读取步骤写入的上下文文件，更新后续步骤的环境与任务输出。
 func (sc *stepContext) collect(out io.Writer) {
-	readLines(filepath.Join(sc.dir, ctxDir, "env"), func(k, v string) { sc.env[k] = v })
-	readLines(filepath.Join(sc.dir, ctxDir, "output"), func(k, v string) {
+	readLines(filepath.Join(sc.ctx, "env"), func(k, v string) { sc.env[k] = v })
+	readLines(filepath.Join(sc.ctx, "output"), func(k, v string) {
 		if len(sc.outputs) >= maxOutputs && sc.outputs[k] == "" {
 			fmt.Fprintf(out, "==> warning: too many outputs, %s ignored\n", k)
 			return
 		}
 		sc.outputs[k], sc.env[k] = v, v
 	})
-	if f, err := os.Open(filepath.Join(sc.dir, ctxDir, "path")); err == nil {
+	if f, err := os.Open(filepath.Join(sc.ctx, "path")); err == nil {
 		s := bufio.NewScanner(f)
 		for s.Scan() {
 			if p := strings.TrimSpace(s.Text()); p != "" {
@@ -159,9 +169,12 @@ func readLines(path string, fn func(k, v string)) {
 
 // mountArgs 返回 docker run 需要的额外挂载。
 func (sc *stepContext) mountArgs() []string {
-	args := []string{"-v", sc.tools + ":" + containerTools}
+	args := []string{"-v", sc.tools + ":" + containerTools, "-v", sc.ctx + ":" + containerCtx}
 	for _, m := range sc.mounts {
 		args = append(args, "-v", m)
 	}
 	return args
 }
+
+// remove 删除上下文文件目录（工作目录由 runJob 删除）。
+func (sc *stepContext) remove() { _ = os.RemoveAll(sc.ctx) }

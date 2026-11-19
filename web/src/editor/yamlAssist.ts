@@ -54,6 +54,7 @@ const JOB: Keys = {
 }
 const DEPLOY: Keys = {
   hosts: '主机组名（在「环境与主机」中维护）',
+  artifact: '部署的构建物：上游「构建物上传」的名称，解压到每台主机的远程目录',
   upload: '上传工作目录中的目录或文件（如上游产物 dist）',
   target: '远程目录：上传到这里并作为脚本的工作目录',
   batch: '每批主机数，默认 1；前一批成功才继续',
@@ -93,6 +94,7 @@ const SOURCE: Keys = {
   username: 'HTTP 用户名，默认 oauth2',
   token_secret: '存放访问令牌的密钥名',
   depth: '浅克隆深度，默认 50',
+  mirrors: '加速地址前缀列表，如 https://ghfast.top/；提交号与直连一致才使用',
   report_status: 'true 时把运行结果回写为提交状态',
   provider: 'github / gitlab / gitea，省略时按地址推断',
 }

@@ -3,3 +3,11 @@ internal/webui/dist/*
 !internal/webui/dist/.gitkeep
 .claude/settings.local.json
 build/
+
+# 本地测试 sshd 的密钥与配置，不入库
+/deploy_key
+/deploy_key.pub
+/host_key
+/host_key.pub
+/authorized_keys
+/sshd_config

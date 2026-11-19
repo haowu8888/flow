@@ -1,27 +1,51 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react'
 import { api, UNAUTHORIZED_EVENT } from './api'
 import { makeSession, SessionContext, useSession } from './auth'
-import { Account, DangerZone, Security, Tokens } from './pages/Account'
-import { Roles } from './pages/Roles'
-import { Connections } from './pages/Connections'
 import { Icon, type IconName } from './components/Icon'
 import { Dashboard } from './pages/Dashboard'
-import { Approvals } from './pages/Approvals'
-import { Audit } from './pages/Audit'
 import { Login } from './pages/Login'
-import { Members } from './pages/Members'
-import { NewPipeline } from './pages/NewPipeline'
-import { PipelineDetail } from './pages/PipelineDetail'
-import { PipelineList } from './pages/PipelineList'
-import { RunDetail } from './pages/RunDetail'
-import { Hosts } from './pages/Hosts'
-import { Runners } from './pages/Runners'
-import { Secrets } from './pages/Secrets'
-import { TemplateEdit } from './pages/TemplateEdit'
-import { Templates } from './pages/Templates'
 import { usePolling } from './hooks'
 import { href, useRoute, type Route } from './router'
 import type { Me } from './types'
+
+// 除登录页与仪表盘（首屏）外，页面按需加载：画布编辑器、日志终端等大依赖不进首屏的包。
+function lazyPage<K extends string, M extends Record<K, ComponentType<any>>>(load: () => Promise<M>, name: K) {
+  return lazy(() => load().then((m) => ({ default: m[name] })))
+}
+const Account = lazyPage(() => import('./pages/Account'), 'Account')
+const DangerZone = lazyPage(() => import('./pages/Account'), 'DangerZone')
+const Security = lazyPage(() => import('./pages/Account'), 'Security')
+const Tokens = lazyPage(() => import('./pages/Account'), 'Tokens')
+const Approvals = lazyPage(() => import('./pages/Approvals'), 'Approvals')
+const Audit = lazyPage(() => import('./pages/Audit'), 'Audit')
+const Connections = lazyPage(() => import('./pages/Connections'), 'Connections')
+const Hosts = lazyPage(() => import('./pages/Hosts'), 'Hosts')
+const Members = lazyPage(() => import('./pages/Members'), 'Members')
+const NewPipeline = lazyPage(() => import('./pages/NewPipeline'), 'NewPipeline')
+const PipelineDetail = lazyPage(() => import('./pages/PipelineDetail'), 'PipelineDetail')
+const PipelineList = lazyPage(() => import('./pages/PipelineList'), 'PipelineList')
+const Roles = lazyPage(() => import('./pages/Roles'), 'Roles')
+const RunDetail = lazyPage(() => import('./pages/RunDetail'), 'RunDetail')
+const Runners = lazyPage(() => import('./pages/Runners'), 'Runners')
+const Secrets = lazyPage(() => import('./pages/Secrets'), 'Secrets')
+const TemplateEdit = lazyPage(() => import('./pages/TemplateEdit'), 'TemplateEdit')
+const Templates = lazyPage(() => import('./pages/Templates'), 'Templates')
+
+/** 页面分块加载失败（如网络断开）时给出提示，而不是整个应用白屏；切换路由后重置。 */
+class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <p className="muted center">
+        页面加载失败，请检查网络后<a href="" onClick={() => location.reload()}>刷新</a>重试。
+      </p>
+    )
+  }
+}
 
 export function App() {
   // undefined：加载中；null：未登录。
@@ -93,28 +117,30 @@ function Shell() {
   const name = me.user.display_name || me.user.username
   const inSettings = settings.some((s) => s.page.includes(route.page))
   const page = (
-    <>
-      {route.page === 'dashboard' && <Dashboard />}
-      {route.page === 'list' && <PipelineList />}
-      {route.page === 'trash' && <PipelineList trash />}
-      {route.page === 'new' && <NewPipeline key={route.template} templateId={route.template} />}
-      {route.page === 'pipeline' && <PipelineDetail id={route.id} tab={route.tab} section={route.section} />}
-      {route.page === 'run' && <RunDetail id={route.id} />}
-      {route.page === 'tokens' && <Tokens />}
-      {route.page === 'hosts' && <Hosts tab={route.tab} />}
-      {route.page === 'runners' && <Runners />}
-      {route.page === 'secrets' && <Secrets />}
-      {route.page === 'audit' && <Audit />}
-      {route.page === 'approvals' && <Approvals />}
-      {route.page === 'templates' && <Templates />}
-      {route.page === 'template' && <TemplateEdit key={route.id} id={route.id} />}
-      {route.page === 'members' && <Members />}
-      {route.page === 'account' && <Account />}
-      {route.page === 'security' && <Security />}
-      {route.page === 'danger' && <DangerZone />}
-      {route.page === 'roles' && <Roles />}
-      {route.page === 'connections' && <Connections />}
-    </>
+    <PageBoundary key={route.page}>
+      <Suspense fallback={<p className="muted center">加载中…</p>}>
+        {route.page === 'dashboard' && <Dashboard />}
+        {route.page === 'list' && <PipelineList />}
+        {route.page === 'trash' && <PipelineList trash />}
+        {route.page === 'new' && <NewPipeline key={route.template} templateId={route.template} />}
+        {route.page === 'pipeline' && <PipelineDetail id={route.id} tab={route.tab} section={route.section} />}
+        {route.page === 'run' && <RunDetail id={route.id} />}
+        {route.page === 'tokens' && <Tokens />}
+        {route.page === 'hosts' && <Hosts tab={route.tab} />}
+        {route.page === 'runners' && <Runners />}
+        {route.page === 'secrets' && <Secrets />}
+        {route.page === 'audit' && <Audit />}
+        {route.page === 'approvals' && <Approvals />}
+        {route.page === 'templates' && <Templates />}
+        {route.page === 'template' && <TemplateEdit key={route.id} id={route.id} />}
+        {route.page === 'members' && <Members />}
+        {route.page === 'account' && <Account />}
+        {route.page === 'security' && <Security />}
+        {route.page === 'danger' && <DangerZone />}
+        {route.page === 'roles' && <Roles />}
+        {route.page === 'connections' && <Connections />}
+      </Suspense>
+    </PageBoundary>
   )
   // 编辑器页面放宽内容宽度，给画布留出空间
   const wide = route.page === 'new' || route.page === 'template'

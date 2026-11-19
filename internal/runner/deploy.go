@@ -20,7 +20,7 @@ import (
 	"flow/internal/sshx"
 )
 
-// runDeploy 执行主机部署任务：在本机准备工作区（代码、上游产物），打包 upload 路径，
+// runDeploy 执行主机部署任务：在本机准备工作区（代码、上游产物），打包 artifact 构建物或 upload 路径，
 // 按批次通过 SSH 上传到每台主机的目标目录并依次执行步骤。前一批全部成功才继续下一批。
 func (r *Runner) runDeploy(ctx context.Context, a *protocol.ClaimResponse, out io.Writer) (int, error) {
 	job := a.Job
@@ -37,7 +37,20 @@ func (r *Runner) runDeploy(ctx context.Context, a *protocol.ClaimResponse, out i
 		return -1, err
 	}
 	var bundle []byte
-	if d.Upload != "" {
+	if d.Artifact != "" {
+		ref, err := findNamed(a, d.Artifact)
+		if err != nil {
+			return 1, fmt.Errorf("deploy.artifact: %w", err)
+		}
+		pkg := filepath.Join(dir, ".flow-deploy-artifact")
+		if err := r.fetchNamed(ctx, ref, pkg); err != nil {
+			return -1, fmt.Errorf("download artifact %s: %w", ref.Name, err)
+		}
+		if bundle, err = packUpload(pkg, "."); err != nil {
+			return -1, fmt.Errorf("deploy.artifact: %w", err)
+		}
+		fmt.Fprintf(out, "==> 部署构建物 %s %s（%s），解压到每台主机的 %s\n", ref.Name, ref.Version, humanSize(ref.Size), d.Target)
+	} else if d.Upload != "" {
 		if bundle, err = packUpload(dir, d.Upload); err != nil {
 			return -1, fmt.Errorf("deploy.upload: %w", err)
 		}

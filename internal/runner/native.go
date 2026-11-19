@@ -146,19 +146,9 @@ const stepConnectionEnv = "FLOW_STEP_CONNECTION"
 
 // downloadNamedArtifact 下载上游任务上传的命名构建物并解压。输入：INPUT_ARTIFACT 名称，INPUT_TARGET_DIR 解压目录。
 func downloadNamedArtifact(ctx context.Context, r *Runner, a *protocol.ClaimResponse, sc *stepContext, env map[string]string, out io.Writer) (int, error) {
-	name := strings.TrimSpace(env["INPUT_ARTIFACT"])
-	var ref *protocol.ArtifactRef
-	for i := range a.Named {
-		if a.Named[i].Name == name {
-			ref = &a.Named[i] // 多个上游同名时取最后一个
-		}
-	}
-	if ref == nil {
-		var names []string
-		for _, n := range a.Named {
-			names = append(names, n.Name)
-		}
-		return 1, fmt.Errorf("上游任务没有名为 %q 的构建物（可用：%s）", name, strings.Join(names, "、"))
+	ref, err := findNamed(a, strings.TrimSpace(env["INPUT_ARTIFACT"]))
+	if err != nil {
+		return 1, err
 	}
 	target := strings.TrimSpace(env["INPUT_TARGET_DIR"])
 	if target == "" {
@@ -167,45 +157,68 @@ func downloadNamedArtifact(ctx context.Context, r *Runner, a *protocol.ClaimResp
 	if err := checkRel(target); err != nil && target != "." {
 		return 1, err
 	}
-	dest := filepath.Join(sc.dir, target)
-	if err := os.MkdirAll(dest, 0o755); err != nil {
+	if err := r.fetchNamed(ctx, ref, filepath.Join(sc.dir, target)); err != nil {
 		return -1, err
+	}
+	fmt.Fprintf(out, "[SUCCESS] 已下载构建物 %s %s 到 %s\n", ref.Name, ref.Version, target)
+	return 0, nil
+}
+
+// findNamed 按名称查找上游的命名构建物（多个上游同名时取最后一个）。
+func findNamed(a *protocol.ClaimResponse, name string) (*protocol.ArtifactRef, error) {
+	var ref *protocol.ArtifactRef
+	for i := range a.Named {
+		if a.Named[i].Name == name {
+			ref = &a.Named[i]
+		}
+	}
+	if ref == nil {
+		var names []string
+		for _, n := range a.Named {
+			names = append(names, n.Name)
+		}
+		return nil, fmt.Errorf("上游任务没有名为 %q 的构建物（可用：%s）", name, strings.Join(names, "、"))
+	}
+	return ref, nil
+}
+
+// fetchNamed 下载命名构建物并解压到 dest。
+func (r *Runner) fetchNamed(ctx context.Context, ref *protocol.ArtifactRef, dest string) error {
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return err
 	}
 	rc, err := r.client.DownloadArtifact(ctx, ref.ID)
 	if err != nil {
-		return -1, err
+		return err
 	}
 	defer rc.Close()
 	tmp, err := os.CreateTemp(r.cfg.WorkDir, "artifact-*")
 	if err != nil {
-		return -1, err
+		return err
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 	n, err := io.Copy(tmp, rc)
 	if err != nil {
-		return -1, err
+		return err
 	}
 	if ref.Format == "zip" {
 		zr, err := zip.NewReader(tmp, n)
 		if err != nil {
-			return -1, err
+			return err
 		}
 		for _, f := range zr.File {
 			if err := extractZipFile(f, dest); err != nil {
-				return -1, err
+				return err
 			}
 		}
-	} else {
-		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-			return -1, err
-		}
-		if _, err := extractTarGz(dest, tmp); err != nil {
-			return -1, err
-		}
+		return nil
 	}
-	fmt.Fprintf(out, "[SUCCESS] 已下载构建物 %s %s 到 %s\n", ref.Name, ref.Version, target)
-	return 0, nil
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	_, err = extractTarGz(dest, tmp)
+	return err
 }
 
 func extractZipFile(f *zip.File, dest string) error {

@@ -32,11 +32,11 @@
 - **Runner**：在界面注册，每个 Runner 持独立 Token（库中只存哈希），只领取本租户的 Job，Job 的 `runs-on` 须是 Runner 上报标签的子集；注册 Runner 的标识由 Server 决定，不能冒用他人租约。`FLOW_RUNNER_TOKEN` 是可选的共享 Token（可领取所有租户的 Job），适合单团队自用。
 - **产物与缓存**：Job 成功后把 `artifacts` 匹配的文件打包为 tar.gz 流式上传到 Server（本地目录或 S3 兼容存储），所有下游（含间接下游）Job 执行前自动下载解压；重试时覆盖。`cache` 存在 Runner 本地，按租户 + 展开后的 key 区分，成功后保存。解压时拒绝逃逸工作目录的路径和符号链接。
 - **通知**：运行结束时按流水线 `notify` 配置发送钉钉 / 飞书 / 企业微信机器人或通用 Webhook；在事务中锁住 Run 发送，多实例不会重复发送，失败只记日志不重试。
-- **用户与权限**：用户名密码登录（PBKDF2），会话为 HttpOnly Cookie（Cookie 鉴权的写请求须带 `X-Flow-Request` 头防 CSRF），脚本使用个人访问令牌（`Authorization: Bearer`）。用户可属于多个租户，每个租户内角色为只读 / 开发者 / 管理员；所有资源按当前租户隔离，其他租户的资源一律返回 404。系统管理员可新建租户，在所有租户中视为管理员。
+- **用户与权限**：用户名密码登录（PBKDF2；同一 IP + 用户名连续错 5 次锁 1 分钟起、每多错一次翻倍至 15 分钟，同一 IP 15 分钟内错 20 次锁到窗口结束，返回 429；来源 IP 在经回环 / 内网反向代理时取 `X-Forwarded-For` 最右侧公网地址或 `X-Real-IP`，限流计数在内存中，重启清零），会话为 HttpOnly Cookie（Cookie 鉴权的写请求须带 `X-Flow-Request` 头防 CSRF），脚本使用个人访问令牌（`Authorization: Bearer`）。用户可属于多个租户，每个租户内角色为只读 / 开发者 / 管理员；所有资源按当前租户隔离，其他租户的资源一律返回 404。系统管理员可新建租户，在所有租户中视为管理员。
 - **Step 环境**：只继承 PATH/HOME 等白名单变量，不会拿到 Runner Token。
 - **流水线权限**：每条流水线有成员与角色（内置管理员 / 开发者 / 运行者 / 查看者，可在「角色管理」自定义），权限细分为查看、运行、编辑、删除、删除运行记录、管理成员；创建人与租户管理员拥有全部权限，公开流水线所有成员可查看，租户只读成员最多查看。
 - **构建节点**：自建节点（`/api/runner/install.sh` 一条命令安装 flow-runner 并注册为 systemd 服务）、GitHub 节点（任务排队时调用 `workflow_dispatch` 触发仓库工作流，工作流中 `flow-runner -once` 领取一个任务后退出；10 分钟未被领取重新触发）、主机 Agent（主机以 Agent 方式接入时，部署 Runner 把上传内容与脚本经 Server 交给主机上的 `flow-runner -agent` 执行并转发日志，主机无需开放 SSH；Agent 失联 60s 后任务失败）。节点上报系统、架构、主机名、版本与并发；任务 `runs-on: [node:<名称>]` 只在该节点执行。
-- **内置步骤与服务连接**：步骤写 `kind:` + `with:`（参数注入为 `INPUT_*`）使用内置步骤库（环境安装、构建、Docker、Git、通知、OSS / Cloudreve、构建物上传下载等，`GET /api/step-kinds` 列出）；`connection:` 引用「服务连接」（Git 平台、镜像仓库、npm、OSS、Cloudreve、Bark / 企业微信 / Telegram / 邮件），字段以 `CONN_*` 注入并脱敏。步骤间用 `$FLOW_ENV` / `$FLOW_PATH` / `$FLOW_OUTPUT` 传递变量、PATH 与任务输出，下游任务以环境变量读取上游输出，`if:` 表达式（`== != =~ !~ && || !`）决定是否执行；因条件不满足（或 `when: on_failure` 未触发）而跳过的任务视为已满足依赖，不阻塞下游，上游失败导致的跳过才向下传递。
+- **内置步骤与服务连接**：步骤写 `kind:` + `with:`（参数注入为 `INPUT_*`）使用内置步骤库（环境安装、构建、Docker、Git、通知、OSS / Cloudreve、构建物上传下载等，`GET /api/step-kinds` 列出）；`connection:` 引用「服务连接」（Git 平台、镜像仓库、npm、OSS、Cloudreve、Bark / 企业微信 / Telegram / 邮件），字段以 `CONN_*` 注入并脱敏。步骤间用 `$FLOW_ENV` / `$FLOW_PATH` / `$FLOW_OUTPUT` 传递变量、PATH 与任务输出（这些文件在工作目录之外，步骤 `git clean -fdx` 不影响），下游任务以环境变量读取上游输出，`if:` 表达式（`== != =~ !~ && || !`）决定是否执行；因条件不满足（或 `when: on_failure` 未触发）而跳过的任务视为已满足依赖，不阻塞下游，上游失败导致的跳过才向下传递。
 - **变量**：流水线变量（可设为运行时输入）、通用变量组（租户级，私密变量加密并脱敏）、流水线级 / 租户级密钥，优先级依次升高；`cache_dirs` 为容器任务挂载按流水线隔离的缓存目录。
 - **任务插件与审批消息**：任务结束时按状态发送插件消息（钉钉 / 飞书 / Webhook 或服务连接）；人工卡点进入待审批时经服务连接发送带签名「通过 / 驳回」链接的消息（需 `FLOW_PUBLIC_URL`）。
 
@@ -65,8 +65,8 @@
 | `internal/version` | 构建版本（`-ldflags -X flow/internal/version.Version=…`），节点上报 |
 | `scripts/dev-env.sh` | 开发环境：Go 与 PostgreSQL 的安装、独立集群启动与环境变量导出（容器重建后自动恢复） |
 | `migrations/` | SQL 迁移（嵌入二进制，Server 启动时按文件名顺序自动执行；所有表含 `tenant_id`；已执行的文件不得修改，变更新增文件）：016 流水线成员 / 角色 / 公开、会话信息；017 通用变量组、服务连接、运行备注与并发上限；018 任务输出、通知标记、命名构建物；019 流水线分组；020 构建节点类型 / 环境信息、主机接入方式、Agent 主机任务 |
-| `web/` | 前端：Vite + React + TypeScript，React Flow 画 DAG，xterm.js 显示日志；`src/editor/` 为可视化流水线编辑器（`model.ts` 在 YAML 文档树上增删改，保留注释与未改动的格式；`Canvas.tsx` 画布；`Panels.tsx` 属性面板；`presets.ts` 任务组件库；`History.tsx` 配置历史、差异与回退；`YamlEditor.tsx` + `yamlAssist.ts` 基于 CodeMirror 的 YAML 模式：问题定位到行、按层级补全字段；`StepTemplateForm.tsx` 步骤模板表单）；界面布局参照 Code Flow：顶栏「仪表盘 / 流水线 / API Key / 账户设置」，流水线列表与账户设置为左侧分区导航；流水线详情分「最近运行 / 运行历史 / 部署历史 / 统计报表」（部署历史 `components/Deliveries.tsx` ← `GET /api/pipelines/{id}/deliveries`，`engine/deliveries.go` 按运行汇总构建物、网盘上传、OSS 上传与主机部署；网盘 / OSS 记录取自步骤输出 `jobs.step_states[].outputs`，由 Runner 每步上报；构建物另有免登录签名下载 `/api/open/artifacts/{id}/download?sig=`，即输出 `ARTIFACT_<名称>_URL`；「构建物上传」可选对象存储服务连接，blob key 以 `ext/<连接ID>/<Bucket>/` 开头，读写删经 `engine/extblob.go` 路由，`expire_days` 覆盖保留天数），运行详情另有触发详情（`runs.trigger_info`：Webhook 提交列表 / 对比链接 / 覆盖变量）、排队原因（`GET /api/runs/{id}/queue`，`engine/queue.go`）与强制结束（`POST /api/runs/{id}/cancel?force=true`），编辑页（`#/pipelines/{id}/edit/{basic|triggers|vars}`）分「基本信息 / 流程配置 / 触发设置 / 变量和缓存」，流程配置中任务与阶段的属性在右侧抽屉中编辑（`PipelineEditor` 的 `section`，设置分区由 `Panels.tsx` 的 `PipelineSettings` 渲染）；`components/StageBoard.tsx` 为运行的阶段看板（点任务 / 步骤打开日志窗口），`components/Icon.tsx` 为线性图标；`src/pages/` 中 `Dashboard.tsx` 为仪表盘、`NewPipeline.tsx` 为新建向导、`Hosts.tsx` 为环境与主机、`PipelineStats.tsx` 为统计、`Audit.tsx` 为审计日志 |
-| `internal/webui` | `go:embed` 前端构建产物（`web/` 构建输出到 `internal/webui/dist`） |
+| `web/` | 前端：Vite + React + TypeScript，React Flow 画 DAG，xterm.js 显示日志；`src/editor/` 为可视化流水线编辑器（`model.ts` 在 YAML 文档树上增删改，保留注释与未改动的格式；`Canvas.tsx` 画布；`Panels.tsx` 属性面板；`presets.ts` 任务组件库；`History.tsx` 配置历史、差异与回退；`YamlEditor.tsx` + `yamlAssist.ts` 基于 CodeMirror 的 YAML 模式：问题定位到行、按层级补全字段；`StepTemplateForm.tsx` 步骤模板表单）；界面布局参照 Code Flow：顶栏「仪表盘 / 流水线 / API Key / 账户设置」，流水线列表与账户设置为左侧分区导航；流水线详情分「最近运行 / 运行历史 / 部署历史 / 统计报表」（部署历史 `components/Deliveries.tsx` ← `GET /api/pipelines/{id}/deliveries`，`engine/deliveries.go` 按运行汇总构建物、网盘上传、OSS 上传与主机部署；网盘 / OSS 记录取自步骤输出 `jobs.step_states[].outputs`，由 Runner 每步上报；构建物另有免登录签名下载 `/api/open/artifacts/{id}/download?exp=&sig=`（7 天有效，页面每次打开重新签发），即输出 `ARTIFACT_<名称>_URL`；「构建物上传」可选对象存储服务连接，blob key 以 `ext/<连接ID>/<Bucket>/` 开头，读写删经 `engine/extblob.go` 路由，`expire_days` 覆盖保留天数），运行详情另有触发详情（`runs.trigger_info`：Webhook 提交列表 / 对比链接 / 覆盖变量）、排队原因（`GET /api/runs/{id}/queue`，`engine/queue.go`）与强制结束（`POST /api/runs/{id}/cancel?force=true`），编辑页（`#/pipelines/{id}/edit/{basic|triggers|vars}`）分「基本信息 / 流程配置 / 触发设置 / 变量和缓存」，流程配置中任务与阶段的属性在右侧抽屉中编辑（`PipelineEditor` 的 `section`，设置分区由 `Panels.tsx` 的 `PipelineSettings` 渲染）；`components/StageBoard.tsx` 为运行的阶段看板（点任务 / 步骤打开日志窗口），`components/Icon.tsx` 为线性图标；`src/pages/` 中 `Dashboard.tsx` 为仪表盘、`NewPipeline.tsx` 为新建向导、`Hosts.tsx` 为环境与主机、`PipelineStats.tsx` 为统计、`Audit.tsx` 为审计日志 |
+| `internal/webui` | `go:embed` 前端构建产物（`web/` 构建输出到 `internal/webui/dist`）；`assets/`（文件名带哈希）长期缓存，`index.html` 每次校验。前端除登录页和仪表盘外按页面分块懒加载（`App.tsx` 的 `lazyPage`，画布编辑器、日志终端各自成块），发版后旧分块加载失败会自动刷新一次 |
 | `examples/` | 示例流水线 |
 | `deploy/` | Server / Runner 镜像 Dockerfile（从源码构建），`kubernetes/runner.yaml` 为 Kubernetes 执行器部署清单；`docker/` 为 Docker Compose 部署（预编译二进制的运行镜像 + Server / 内置构建节点编排，见「Docker 部署」） |
 | `scripts/package-docker.sh` | 打包 Docker 部署目录：构建前端、交叉编译 Server 与各平台 Runner，输出 `build/flow-docker(.tar.gz)` |
@@ -160,7 +160,7 @@ docker compose up -d
 | `FLOW_MODE=agent` / `-agent` | runner | 作为主机 Agent 运行（只执行部署到本机的任务） |
 | `FLOW_RUNNER_ONCE=1` / `-once -wait 5m` | runner | 领取并执行一个任务后退出，等待超时未领到也退出（GitHub 节点） |
 
-Runner 主机需要 `git`（配置了 `source` 时）和 `docker`（Job 指定 `image` 时）。代码拉取、产物与缓存解压都在主机工作目录中进行，容器内挂载为 `/workspace`。
+Runner 主机需要 `git`（配置了 `source` 时）和 `docker`（Job 指定 `image` 时）。代码拉取、产物与缓存解压都在主机工作目录中进行，容器内挂载为 `/workspace`。指定了 `image` 的 Job 在第一个要进容器的步骤前启动一个常驻容器（入口改为 `tail -f /dev/null`），各步骤用 `docker exec` 在其中执行，Job 结束时删除；所以前面步骤装的系统软件包（如「安装系统软件包」）后面的步骤能用到。`$FLOW_PATH` 的目录加在镜像自己的 `PATH` 前面。
 
 ## 流水线 YAML
 
@@ -180,6 +180,7 @@ source:                 # 可选：Runner 在执行 Step 前浅克隆代码到�
   branch: main          # 默认分支；Webhook 触发时用推送的分支 / 标签与提交，手动运行可传 FLOW_GIT_BRANCH 覆盖
   token_secret: GIT_TOKEN   # 可选：访问令牌所在的密钥名（HTTP Basic，用户名默认 oauth2，可用 username 修改）
   depth: 50             # 默认 50
+  mirrors: [https://ghfast.top/]   # 可选：加速地址前缀（拉取地址为前缀 + 仓库地址）。先直连取提交号、自动重试，再经加速地址下载，提交号一致才使用；配置了 token_secret 时不使用
   report_status: true   # 可选：把运行结果回写为提交状态（GitHub / GitLab / Gitea 的提交与合并请求页显示），令牌需有写状态权限
   provider: gitlab      # 可选：github / gitlab / gitea，省略时按仓库地址推断（github.com、主机名含 gitlab / gitea）
 notify:                 # 可选：运行结束通知
@@ -226,14 +227,15 @@ stages:                 # Stage 之间默认串行
       - name: deploy-prod
         deploy:              # 主机部署：步骤通过 SSH 在主机组的每台主机上执行（主机组在「环境与主机」中维护）
           hosts: prod-web    # 主机组名；保存时校验存在
-          upload: dist       # 可选：上传工作目录中的目录（上传其内容）或文件，通常是上游产物
+          artifact: app      # 可选：部署上游「构建物上传」的产物包（按名称），解压到 target，部署历史记录产物包与版本
+          # upload: dist     # 或者：上传工作目录中的目录（上传其内容）或文件；与 artifact 二选一
           target: /opt/apps/app   # 远程目录，默认 /tmp/flow-deploy/<流水线名>；上传到这里并作为脚本工作目录
           batch: 1           # 每批主机数，默认 1（逐台滚动）；前一批全部成功才继续，失败即停止
         steps:
           - run: ./restart.sh   # 远程以 set -e 执行；可用 $FLOW_DEPLOY_HOST、$FLOW_DEPLOY_DIR 与流水线变量、密钥
 ```
 
-**主机部署**：在「环境与主机」中添加服务器（地址、端口、用户、SSH 私钥或密码，凭据加密保存），加入主机组，主机组归属于环境（开发 / 测试 / 预发 / 生产…）。连接测试从 Server 发起，首次成功时记录主机公钥，之后部署时校验（不一致即拒绝，主机重装后可「重置指纹」）。部署由 Runner 执行：领取任务时随任务下发目标主机与解密后的凭据，Runner 准备工作区（上游产物、可选代码），打包 `upload` 后按批次 SSH 到每台主机，`tar` 解压到 `target` 并依次执行步骤，日志按主机加前缀，进度逐台上报；部署任务默认不拉取代码（`checkout: true` 开启），不能设置 `image`。环境可设置「部署前需要审批」（可指定审批人）：部署任务就绪后先进入待审批，通过后才执行；重试失败的运行需重新审批。待审批的卡点与部署汇总在「待我审批」（顶栏显示数量）中。每次部署记录在「部署记录」中，环境页展示各流水线在该环境的最近部署。
+**主机部署**：在「环境与主机」中添加服务器（地址、端口、用户、SSH 私钥或密码，凭据加密保存），加入主机组，主机组归属于环境（开发 / 测试 / 预发 / 生产…）。连接测试从 Server 发起，首次成功时记录主机公钥，之后部署时校验（不一致即拒绝，主机重装后可「重置指纹」）。部署由 Runner 执行：领取任务时随任务下发目标主机与解密后的凭据，Runner 准备工作区（上游产物、可选代码），下载 `artifact` 指定的产物包（或打包 `upload`）后按批次 SSH 到每台主机，`tar` 解压到 `target` 并依次执行步骤，日志按主机加前缀，进度逐台上报；部署任务默认不拉取代码（`checkout: true` 开启），不能设置 `image`。环境可设置「部署前需要审批」（可指定审批人）：部署任务就绪后先进入待审批，通过后才执行；重试失败的运行需重新审批。待审批的卡点与部署汇总在「待我审批」（顶栏显示数量）中。每次部署记录在「部署记录」中（`deploy.artifact` 部署的产物包名称、版本、大小一并记录，流水线「部署历史」中显示「产物包 → 环境 / 主机组」，产物包被清理后仍保留记录），环境页展示各流水线在该环境的最近部署。
 
 - **跳板机**：主机可指定经由另一台主机（堡垒机）连接，等同 `ssh -J`，只支持一级；连接测试与部署都经跳板机转发，跳板机的主机公钥同样首次记录后校验。被引用的跳板机不能删除。
 - **环境变量与密钥**：环境可配置变量和密钥（密钥加密保存、只写不读），在部署到该环境的任务执行时注入：环境变量覆盖流水线中的同名变量，环境密钥覆盖租户 / 流水线的同名密钥，日志中脱敏。同一条流水线部署到不同环境时用各自的配置。
@@ -404,7 +406,7 @@ Job Pod ── init 容器 prepare（helper 镜像）：把 flow-runner 复制�
 4. ~~**密钥**：加密存储，下发给 Runner 时注入，日志中按值脱敏~~（已完成；后续：主密钥轮换）
 5. ~~**Runner 增强**：每个 Runner 独立 Token、标签匹配（`runs-on`）、缓存与制品上传（MinIO/S3）~~（已完成；缓存目前在 Runner 本地，后续可放到对象存储供多台 Runner 共享）
 6. ~~**流程能力**：人工卡点、矩阵构建、失败重试、通知（钉钉/飞书）~~（已完成；另有 `when` 条件、超时、代码源自动拉取）
-7. ~~**用户体系**：登录、RBAC，`tenant_id` 由认证上下文注入~~（已完成；后续：LDAP / OAuth 登录、审计日志、登录限流）
+7. ~~**用户体系**：登录、RBAC，`tenant_id` 由认证上下文注入~~（已完成；登录限流、审计日志已完成；后续：LDAP / OAuth 登录）
 8. ~~**SSE 推送**：日志与 Run 状态实时推送，断线按字节偏移续传~~（已完成；进程内变更即时推送，多实例部署时其他实例的变更靠 2 秒兜底轮询，后续可用 PostgreSQL LISTEN/NOTIFY）
 9. ~~**合并请求触发与投递去重**：GitHub / GitLab / Gitea / Gitee 的 PR / MR 事件，fork 默认不运行；按投递 ID 去重~~（已完成；后续：向 Git 平台回写提交状态）
 

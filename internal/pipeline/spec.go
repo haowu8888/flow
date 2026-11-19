@@ -187,6 +187,9 @@ type Source struct {
 	Username    string `yaml:"username"`     // HTTP 认证用户名，默认 oauth2
 	TokenSecret string `yaml:"token_secret"` // 存放访问令牌的密钥名
 	Depth       int    `yaml:"depth"`        // 浅克隆深度，默认 50
+	// Mirrors 是加速地址前缀（如 https://ghfast.top/），拉取地址为「前缀 + 仓库地址」。先直连仓库取得目标提交，
+	// 再依次经加速地址下载，只认提交号一致的结果（代理改不了代码），都失败时直连下载。配置了 token_secret 时不使用，避免令牌发给代理。
+	Mirrors []string `yaml:"mirrors"`
 	// ReportStatus 为 true 时把运行结果回写为提交状态（需 token_secret 有写状态权限）。
 	ReportStatus bool   `yaml:"report_status"`
 	Provider     string `yaml:"provider"` // github / gitlab / gitea，省略时按仓库地址推断
@@ -234,12 +237,14 @@ type Job struct {
 	MatrixValues    []string      `yaml:"-"` // 展开后的取值（KEY=VALUE），用于展示
 }
 
-// Deploy 是主机部署任务的目标：先把 upload 上传到每台主机的 target 目录，再在该目录执行步骤。
+// Deploy 是主机部署任务的目标：先把 artifact（或 upload）发到每台主机的 target 目录，再在该目录执行步骤。
 type Deploy struct {
 	Hosts  string `yaml:"hosts"`  // 主机组名（在「环境与主机」中维护）
 	Upload string `yaml:"upload"` // 可选：上传工作目录中的文件或目录（如上游产物 dist）
-	Target string `yaml:"target"` // 远程目录，默认 /tmp/flow-deploy/<流水线名>
-	Batch  int    `yaml:"batch"`  // 每批主机数，默认 1（逐台滚动）；前一批全部成功才继续
+	// Artifact 是要部署的构建物：上游「构建物上传」的名称，下载后解压到每台主机的 target 目录，并记在部署记录上。
+	Artifact string `yaml:"artifact"`
+	Target   string `yaml:"target"` // 远程目录，默认 /tmp/flow-deploy/<流水线名>
+	Batch    int    `yaml:"batch"`  // 每批主机数，默认 1（逐台滚动）；前一批全部成功才继续
 }
 
 const maxDeployBatch = 1000
@@ -448,6 +453,11 @@ func (s *Spec) validateSource() error {
 	if src.Depth < 0 {
 		return errors.New("source.depth must not be negative")
 	}
+	for _, m := range src.Mirrors {
+		if !strings.HasPrefix(m, "https://") && !strings.HasPrefix(m, "http://") {
+			return fmt.Errorf("source.mirrors: %q must start with https:// or http://", m)
+		}
+	}
 	if src.TokenSecret != "" && !ValidEnvName(src.TokenSecret) {
 		return fmt.Errorf("source.token_secret %q is not a valid secret name", src.TokenSecret)
 	}
@@ -577,6 +587,10 @@ func (j *Job) validate() error {
 			return fmt.Errorf("deploy.batch must be between 1 and %d", maxDeployBatch)
 		case strings.ContainsAny(d.Target, "\n\r'"):
 			return errors.New("deploy.target must not contain quotes or newlines")
+		case d.Artifact != "" && d.Upload != "":
+			return errors.New("deploy.artifact and deploy.upload are mutually exclusive")
+		case strings.ContainsAny(d.Artifact, " \t\n\r/"):
+			return errors.New("deploy.artifact must be an artifact name (as in the upload step)")
 		}
 		if d.Upload != "" {
 			if err := checkRelPath(d.Upload); err != nil {

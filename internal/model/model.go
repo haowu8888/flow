@@ -266,12 +266,13 @@ type Cache struct {
 
 // Checkout 告诉 Runner 在执行 Step 前拉取哪份代码。
 type Checkout struct {
-	URL         string `json:"url"`
-	Ref         string `json:"ref,omitempty"`    // 分支名或 refs/tags/xxx，空为远端默认分支
-	Commit      string `json:"commit,omitempty"` // 指定提交（Webhook 触发时）
-	Username    string `json:"username,omitempty"`
-	TokenSecret string `json:"token_secret,omitempty"` // 访问令牌所在的密钥名
-	Depth       int    `json:"depth,omitempty"`
+	URL         string   `json:"url"`
+	Ref         string   `json:"ref,omitempty"`    // 分支名或 refs/tags/xxx，空为远端默认分支
+	Commit      string   `json:"commit,omitempty"` // 指定提交（Webhook 触发时）
+	Username    string   `json:"username,omitempty"`
+	TokenSecret string   `json:"token_secret,omitempty"` // 访问令牌所在的密钥名
+	Depth       int      `json:"depth,omitempty"`
+	Mirrors     []string `json:"mirrors,omitempty"` // 加速地址前缀，见 pipeline.Source.Mirrors
 }
 
 // Step 是 Job 内顺序执行的一段 shell 脚本。
