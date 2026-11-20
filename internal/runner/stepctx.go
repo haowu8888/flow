@@ -125,16 +125,19 @@ func (sc *stepContext) mapPath(p string, inContainer bool) string {
 	return p
 }
 
+// setOutput 记录任务输出（同时作为后续步骤的环境变量），超过数量上限的新输出忽略。
+func (sc *stepContext) setOutput(out io.Writer, k, v string) {
+	if len(sc.outputs) >= maxOutputs && sc.outputs[k] == "" {
+		fmt.Fprintf(out, "==> warning: too many outputs, %s ignored\n", k)
+		return
+	}
+	sc.outputs[k], sc.env[k] = v, v
+}
+
 // collect 读取步骤写入的上下文文件，更新后续步骤的环境与任务输出。
 func (sc *stepContext) collect(out io.Writer) {
 	readLines(filepath.Join(sc.ctx, "env"), func(k, v string) { sc.env[k] = v })
-	readLines(filepath.Join(sc.ctx, "output"), func(k, v string) {
-		if len(sc.outputs) >= maxOutputs && sc.outputs[k] == "" {
-			fmt.Fprintf(out, "==> warning: too many outputs, %s ignored\n", k)
-			return
-		}
-		sc.outputs[k], sc.env[k] = v, v
-	})
+	readLines(filepath.Join(sc.ctx, "output"), func(k, v string) { sc.setOutput(out, k, v) })
 	if f, err := os.Open(filepath.Join(sc.ctx, "path")); err == nil {
 		s := bufio.NewScanner(f)
 		for s.Scan() {

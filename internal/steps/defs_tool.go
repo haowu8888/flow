@@ -55,6 +55,7 @@ ok "测试通过"
 done
 `},
 
+		// 普通任务里由 Runner 直接执行（runner/httpstep.go）；部署任务在目标主机上执行下面的脚本。
 		&Kind{Kind: "http-request", Category: "tool", Label: "HTTP 请求",
 			Description: "发送 HTTP 请求（如调用部署接口、刷新 CDN），状态码不符时失败；可从 JSON 响应里取值作为输出",
 			Inputs: []Input{
@@ -83,11 +84,17 @@ head -c 2000 "$OUT"; echo
 set_output HTTP_STATUS "$CODE"
 set_output HTTP_BODY "$(head -c 4000 "$OUT" | tr '\n' ' ')"
 if [ -n "$INPUT_JSON_PATH" ]; then
-  V=$(python3 -c 'import json,sys
+  if command -v python3 >/dev/null 2>&1; then
+    V=$(python3 -c 'import json,sys
 d=json.load(open(sys.argv[1]))
 for k in sys.argv[2].split("."):
     d=d[int(k)] if isinstance(d,list) else d[k]
-print(d if not isinstance(d,(dict,list)) else json.dumps(d,ensure_ascii=False))' "$OUT" "$INPUT_JSON_PATH" 2>/dev/null) || die "响应里没有 $INPUT_JSON_PATH"
+print(d if isinstance(d,str) else json.dumps(d,ensure_ascii=False,separators=(",",":")))' "$OUT" "$INPUT_JSON_PATH" 2>/dev/null) || die "响应里没有 $INPUT_JSON_PATH"
+  elif command -v jq >/dev/null 2>&1; then
+    V=$(jq -r --arg p "$INPUT_JSON_PATH" 'getpath($p | split(".") | map(tonumber? // .)) | if . == null then error("missing") elif type == "string" then . else tojson end' "$OUT" 2>/dev/null) || die "响应里没有 $INPUT_JSON_PATH"
+  else
+    die "构建环境里没有 python3 或 jq，无法按 json_path 取值"
+  fi
   set_output HTTP_VALUE "$V"; info "HTTP_VALUE=$V"
 fi
 okc=0

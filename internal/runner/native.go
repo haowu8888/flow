@@ -16,12 +16,14 @@ import (
 	"flow/internal/protocol"
 )
 
-// 由 Runner 直接执行的内置步骤（需要以 Runner 身份访问 Server，不能交给用户脚本）。
+// 由 Runner 直接执行的内置步骤（需要以 Runner 身份访问 Server，不能交给用户脚本；
+// 或像 http-request 这样不想依赖构建环境里的工具）。
 type nativeStep func(ctx context.Context, r *Runner, a *protocol.ClaimResponse, sc *stepContext, env map[string]string, out io.Writer) (int, error)
 
 var nativeSteps = map[string]nativeStep{
 	"artifact-upload":   uploadNamedArtifact,
 	"artifact-download": downloadNamedArtifact,
+	"http-request":      httpRequest,
 }
 
 // outputKey 把构建物名称转成环境变量名的一部分：ARTIFACT_<名称>。
